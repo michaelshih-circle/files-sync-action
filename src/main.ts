@@ -261,6 +261,9 @@ const run = async (): Promise<number> => {
           return 1;
         }
         core.info(`Found ${existingFiles.right.length} existing files in target repository`);
+        for (const existingFile of existingFiles.right) {
+          core.info(`  - Existing file: ${existingFile.path} (mode: ${existingFile.mode})`);
+        }
 
         // Determine files to delete
         const currentSyncFilePaths = new Set(files.right.map((f) => f.to));
@@ -290,8 +293,7 @@ const run = async (): Promise<number> => {
         })),
         ...filesToDelete.map((file) => ({
           path: file.path,
-          mode: file.mode as any, // Use the original file's mode
-          sha: null as string | null, // null means delete
+          sha: null as string | null, // null means delete (no mode needed)
         })),
       ];
 

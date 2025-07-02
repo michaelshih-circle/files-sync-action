@@ -318,11 +318,10 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
         // create tree
         const treeEntries = files.map((file) => {
           if (file.sha === null) {
-            // Delete file
-            console.log(`Debug - Delete entry: path="${file.path}", mode="${file.mode}", sha=null`);
+            // Delete file - GitHub API only needs path and sha: null
+            console.log(`Debug - Delete entry: path="${file.path}", sha=null (no mode for deletions)`);
             return {
               path: file.path,
-              mode: file.mode!,
               sha: null,
             };
           } else {

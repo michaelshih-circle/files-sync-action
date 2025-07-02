@@ -58846,11 +58846,10 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
             // create tree
             const treeEntries = files.map((file) => {
                 if (file.sha === null) {
-                    // Delete file
-                    console.log(`Debug - Delete entry: path="${file.path}", mode="${file.mode}", sha=null`);
+                    // Delete file - GitHub API only needs path and sha: null
+                    console.log(`Debug - Delete entry: path="${file.path}", sha=null (no mode for deletions)`);
                     return {
                         path: file.path,
-                        mode: file.mode,
                         sha: null,
                     };
                 }
@@ -59299,6 +59298,9 @@ const run = async () => {
                     return 1;
                 }
                 _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Found ${existingFiles.right.length} existing files in target repository`);
+                for (const existingFile of existingFiles.right) {
+                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`  - Existing file: ${existingFile.path} (mode: ${existingFile.mode})`);
+                }
                 // Determine files to delete
                 const currentSyncFilePaths = new Set(files.right.map((f) => f.to));
                 filesToDelete = existingFiles.right.filter((file) => {
@@ -59326,8 +59328,7 @@ const run = async () => {
                 })),
                 ...filesToDelete.map((file) => ({
                     path: file.path,
-                    mode: file.mode, // Use the original file's mode
-                    sha: null, // null means delete
+                    sha: null, // null means delete (no mode needed)
                 })),
             ];
             // Skip commit if no files to sync and no files to delete
