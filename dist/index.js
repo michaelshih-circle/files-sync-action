@@ -58842,26 +58842,30 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
         }, handleErrorReason),
         commit: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async ({ parent, branch, files, message, force }) => {
             // create tree
+            const treeEntries = files.map((file) => {
+                if (file.sha === null) {
+                    // Delete file
+                    console.log(`Debug - Delete entry: path="${file.path}", mode="${file.mode}", sha=null`);
+                    return {
+                        path: file.path,
+                        mode: file.mode,
+                        sha: null,
+                    };
+                }
+                else {
+                    // Add/modify file
+                    console.log(`Debug - Add/modify entry: path="${file.path}", mode="${file.mode}"`);
+                    return {
+                        path: file.path,
+                        mode: file.mode,
+                        content: file.content,
+                    };
+                }
+            });
             const { data: tree } = await octokit.rest.git.createTree({
                 ...defaults,
                 base_tree: parent,
-                tree: files.map((file) => {
-                    if (file.sha === null) {
-                        // Delete file
-                        return {
-                            path: file.path,
-                            sha: null,
-                        };
-                    }
-                    else {
-                        // Add/modify file
-                        return {
-                            path: file.path,
-                            mode: file.mode,
-                            content: file.content,
-                        };
-                    }
-                }),
+                tree: treeEntries,
             });
             // commit
             const { data: commit } = await octokit.rest.git.createCommit({
@@ -59343,6 +59347,9 @@ const run = async () => {
             }
             if (filesToDelete.length > 0) {
                 info('Files to delete', filesToDelete.map((f) => f.path).join(', '));
+                for (const file of filesToDelete) {
+                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Debug - File: ${file.path}, Mode: "${file.mode}", SHA: ${file.sha}`);
+                }
             }
             // Commit files
             const commit = await repo.commit({

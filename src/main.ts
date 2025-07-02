@@ -315,6 +315,9 @@ const run = async (): Promise<number> => {
 
       if (filesToDelete.length > 0) {
         info('Files to delete', filesToDelete.map((f) => f.path).join(', '));
+        for (const file of filesToDelete) {
+          core.info(`Debug - File: ${file.path}, Mode: "${file.mode}", SHA: ${file.sha}`);
+        }
       }
 
       // Commit files

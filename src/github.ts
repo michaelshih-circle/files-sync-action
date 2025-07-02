@@ -314,25 +314,30 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
 
       commit: TE.tryCatchK(async ({ parent, branch, files, message, force }) => {
         // create tree
+        const treeEntries = files.map((file) => {
+          if (file.sha === null) {
+            // Delete file
+            console.log(`Debug - Delete entry: path="${file.path}", mode="${file.mode}", sha=null`);
+            return {
+              path: file.path,
+              mode: file.mode!,
+              sha: null,
+            };
+          } else {
+            // Add/modify file
+            console.log(`Debug - Add/modify entry: path="${file.path}", mode="${file.mode}"`);
+            return {
+              path: file.path,
+              mode: file.mode!,
+              content: file.content!,
+            };
+          }
+        });
+
         const { data: tree } = await octokit.rest.git.createTree({
           ...defaults,
           base_tree: parent,
-          tree: files.map((file) => {
-            if (file.sha === null) {
-              // Delete file
-              return {
-                path: file.path,
-                sha: null,
-              };
-            } else {
-              // Add/modify file
-              return {
-                path: file.path,
-                mode: file.mode!,
-                content: file.content!,
-              };
-            }
-          }),
+          tree: treeEntries,
         });
 
         // commit
