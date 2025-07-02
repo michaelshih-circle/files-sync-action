@@ -198,13 +198,18 @@ const run = async (): Promise<number> => {
             return dir === '.' ? '' : dir;
           }),
         ),
-      ].filter(Boolean);
+      ];
 
       let filesToDelete: { path: string; sha: string }[] = [];
 
       // Only check for files to delete if we have sync paths to manage
-      if (syncPaths.length > 0 && uniquePaths.length > 0) {
-        const existingFiles = await repo.getTreeFiles(parent, uniquePaths)();
+      if (syncPaths.length > 0) {
+        // Get all existing files if we need to check root directory, otherwise filter by paths
+        const hasRootFiles = uniquePaths.includes('');
+        const nonRootPaths = uniquePaths.filter((p) => p !== '');
+        const pathsToCheck = hasRootFiles ? undefined : nonRootPaths.length > 0 ? nonRootPaths : undefined;
+
+        const existingFiles = await repo.getTreeFiles(parent, pathsToCheck)();
         if (T.isLeft(existingFiles)) {
           core.setFailed(`${id} - Get existing files error: ${existingFiles.left.message}`);
           return 1;
@@ -214,7 +219,15 @@ const run = async (): Promise<number> => {
         const syncFilePaths = new Set(files.right.map((f) => f.to));
         filesToDelete = existingFiles.right.filter((file) => {
           // Check if this existing file should be managed by this sync pattern
-          const isInSyncScope = uniquePaths.some((p) => file.path.startsWith(p + '/') || file.path === p);
+          const isInSyncScope = uniquePaths.some((p) => {
+            if (p === '') {
+              // Root directory: only check files directly in root (no subdirectories)
+              return !file.path.includes('/');
+            } else {
+              // Subdirectory: check if file is in this directory
+              return file.path.startsWith(p + '/') || file.path === p;
+            }
+          });
 
           // File should be deleted if it's in scope but not in the sync list
           return isInSyncScope && !syncFilePaths.has(file.path);
