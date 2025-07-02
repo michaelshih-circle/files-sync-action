@@ -155,8 +155,10 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
       repo: parsed.right[1],
     };
 
+    console.log(`Debug - Getting repository info for: ${defaults.owner}/${defaults.repo}`);
     const { data: repo } = await octokit.rest.repos.get(defaults);
     const targetBranch = parsed.right[2] ?? repo.default_branch;
+    console.log(`Debug - Repository info: default_branch=${repo.default_branch}, target_branch=${targetBranch}`);
 
     //--- MERGE SUPPORT START ---
     const getGraphPullRequest = async (number: number): Promise<GraphPullRequest> => {

@@ -58711,8 +58711,10 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
         owner: parsed.right[0],
         repo: parsed.right[1],
     };
+    console.log(`Debug - Getting repository info for: ${defaults.owner}/${defaults.repo}`);
     const { data: repo } = await octokit.rest.repos.get(defaults);
     const targetBranch = parsed.right[2] ?? repo.default_branch;
+    console.log(`Debug - Repository info: default_branch=${repo.default_branch}, target_branch=${targetBranch}`);
     //--- MERGE SUPPORT START ---
     const getGraphPullRequest = async (number) => {
         const { repository: { pullRequest: pr }, } = await octokit.graphql(`
@@ -59233,6 +59235,7 @@ const run = async () => {
         for (const name of entry.repositories) {
             _actions_core__WEBPACK_IMPORTED_MODULE_2__.info('	');
             const id = `patterns.${i} ${name}`;
+            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Initializing repository: ${name}`);
             const repository = await github.initializeRepository(name)();
             if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isLeft(repository)) {
                 _actions_core__WEBPACK_IMPORTED_MODULE_2__.setFailed(`${id} - Repository initializing error: ${repository.left.message}`);
@@ -59289,11 +59292,13 @@ const run = async () => {
                 const hasRootFiles = uniquePaths.includes('');
                 const nonRootPaths = uniquePaths.filter((p) => p !== '');
                 const pathsToCheck = hasRootFiles ? undefined : nonRootPaths.length > 0 ? nonRootPaths : undefined;
+                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Getting existing files from tree SHA: ${parent}, paths: ${pathsToCheck ? pathsToCheck.join(', ') : 'all'}`);
                 const existingFiles = await repo.getTreeFiles(parent, pathsToCheck)();
                 if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isLeft(existingFiles)) {
                     _actions_core__WEBPACK_IMPORTED_MODULE_2__.setFailed(`${id} - Get existing files error: ${existingFiles.left.message}`);
                     return 1;
                 }
+                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Found ${existingFiles.right.length} existing files in target repository`);
                 // Determine files to delete
                 const currentSyncFilePaths = new Set(files.right.map((f) => f.to));
                 filesToDelete = existingFiles.right.filter((file) => {

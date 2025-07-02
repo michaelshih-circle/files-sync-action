@@ -186,6 +186,7 @@ const run = async (): Promise<number> => {
 
       const id = `patterns.${i} ${name}`;
 
+      core.info(`Initializing repository: ${name}`);
       const repository = await github.initializeRepository(name)();
       if (T.isLeft(repository)) {
         core.setFailed(`${id} - Repository initializing error: ${repository.left.message}`);
@@ -251,11 +252,15 @@ const run = async (): Promise<number> => {
         const nonRootPaths = uniquePaths.filter((p) => p !== '');
         const pathsToCheck = hasRootFiles ? undefined : nonRootPaths.length > 0 ? nonRootPaths : undefined;
 
+        core.info(
+          `Getting existing files from tree SHA: ${parent}, paths: ${pathsToCheck ? pathsToCheck.join(', ') : 'all'}`,
+        );
         const existingFiles = await repo.getTreeFiles(parent, pathsToCheck)();
         if (T.isLeft(existingFiles)) {
           core.setFailed(`${id} - Get existing files error: ${existingFiles.left.message}`);
           return 1;
         }
+        core.info(`Found ${existingFiles.right.length} existing files in target repository`);
 
         // Determine files to delete
         const currentSyncFilePaths = new Set(files.right.map((f) => f.to));
