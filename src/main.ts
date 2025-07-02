@@ -293,7 +293,8 @@ const run = async (): Promise<number> => {
         })),
         ...filesToDelete.map((file) => ({
           path: file.path,
-          sha: null as string | null, // null means delete (no mode needed)
+          mode: file.mode as any, // mode is required even for deletions
+          sha: null as string | null, // null means delete
         })),
       ];
 

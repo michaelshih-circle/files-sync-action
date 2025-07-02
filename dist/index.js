@@ -58846,10 +58846,12 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
             // create tree
             const treeEntries = files.map((file) => {
                 if (file.sha === null) {
-                    // Delete file - GitHub API only needs path and sha: null
-                    console.log(`Debug - Delete entry: path="${file.path}", sha=null (no mode for deletions)`);
+                    // Delete file - GitHub API needs path, mode, type, and sha: null
+                    console.log(`Debug - Delete entry: path="${file.path}", mode="${file.mode}", type="blob", sha=null`);
                     return {
                         path: file.path,
+                        mode: file.mode,
+                        type: 'blob',
                         sha: null,
                     };
                 }
@@ -59328,7 +59330,8 @@ const run = async () => {
                 })),
                 ...filesToDelete.map((file) => ({
                     path: file.path,
-                    sha: null, // null means delete (no mode needed)
+                    mode: file.mode, // mode is required even for deletions
+                    sha: null, // null means delete
                 })),
             ];
             // Skip commit if no files to sync and no files to delete
