@@ -242,7 +242,7 @@ const run = async (): Promise<number> => {
         ),
       ];
 
-      let filesToDelete: { path: string; sha: string }[] = [];
+      let filesToDelete: { path: string; sha: string; mode: string }[] = [];
 
       // Only check for files to delete if we have configured paths to manage
       if (allConfiguredPathsArray.length > 0) {
@@ -285,6 +285,7 @@ const run = async (): Promise<number> => {
         })),
         ...filesToDelete.map((file) => ({
           path: file.path,
+          mode: file.mode as any, // Use the original file's mode
           sha: null as string | null, // null means delete
         })),
       ];

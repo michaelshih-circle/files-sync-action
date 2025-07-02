@@ -92,6 +92,7 @@ export type TreeEntry = {
   path: string;
   type: 'blob' | 'tree';
   sha: string;
+  mode: string;
 };
 
 export type GitHubRepository = {
@@ -376,6 +377,7 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
             path: item.path!,
             type: 'blob' as const,
             sha: item.sha!,
+            mode: item.mode!,
           }));
 
         // Filter by paths if provided

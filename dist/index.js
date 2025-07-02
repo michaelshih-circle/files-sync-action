@@ -58899,6 +58899,7 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
                 path: item.path,
                 type: 'blob',
                 sha: item.sha,
+                mode: item.mode,
             }));
             // Filter by paths if provided
             if (paths && paths.length > 0) {
@@ -59316,6 +59317,7 @@ const run = async () => {
                 })),
                 ...filesToDelete.map((file) => ({
                     path: file.path,
+                    mode: file.mode, // Use the original file's mode
                     sha: null, // null means delete
                 })),
             ];
