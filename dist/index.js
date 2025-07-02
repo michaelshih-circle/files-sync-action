@@ -59122,7 +59122,34 @@ const run = async () => {
             pull_request: entry.pull_request ?? {},
         }));
         _actions_core__WEBPACK_IMPORTED_MODULE_2__.debug(`patterns.${i} - merged config: ${json(cfg)}`);
-        // Resolve files
+        // Resolve files and collect all configured paths
+        const allConfiguredPaths = new Set();
+        // First, collect all configured file paths (whether they exist or not)
+        for (const f of entry.files) {
+            const file = typeof f === 'string' ? { from: f, to: f } : f;
+            try {
+                const filepath = node_path__WEBPACK_IMPORTED_MODULE_1__.resolve(cwd, file.from);
+                const stat = await node_fs_promises__WEBPACK_IMPORTED_MODULE_0__.stat(filepath);
+                if (stat.isDirectory()) {
+                    const list = await fast_glob__WEBPACK_IMPORTED_MODULE_4___default()('**/*', {
+                        absolute: false,
+                        onlyFiles: true,
+                        cwd: node_path__WEBPACK_IMPORTED_MODULE_1__.join(cwd, file.from),
+                    });
+                    for (const p of list) {
+                        allConfiguredPaths.add(node_path__WEBPACK_IMPORTED_MODULE_1__.join(file.to, p));
+                    }
+                }
+                else {
+                    allConfiguredPaths.add(file.to);
+                }
+            }
+            catch {
+                // File/directory doesn't exist locally, but it's still a configured path
+                allConfiguredPaths.add(file.to);
+            }
+        }
+        // Then resolve only existing files
         const files = await (0,fp_ts_function__WEBPACK_IMPORTED_MODULE_12__.pipe)(entry.files.map((f, j) => {
             const id = `patterns.${i}.files.${j}`;
             return fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_13__.tryCatch(async () => {
@@ -59137,7 +59164,16 @@ const run = async () => {
                         exclude: f.exclude ?? _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .defaultFile.exclude */ .w2.exclude,
                     };
                 const filepath = node_path__WEBPACK_IMPORTED_MODULE_1__.resolve(cwd, file.from);
-                const stat = await node_fs_promises__WEBPACK_IMPORTED_MODULE_0__.stat(filepath);
+                // Check if file/directory exists
+                let stat;
+                try {
+                    stat = await node_fs_promises__WEBPACK_IMPORTED_MODULE_0__.stat(filepath);
+                }
+                catch {
+                    // File doesn't exist, return empty array
+                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`${id} - File/directory "${file.from}" doesn't exist, will be deleted from target repositories`);
+                    return [];
+                }
                 let paths;
                 if (stat.isDirectory()) {
                     const list = await fast_glob__WEBPACK_IMPORTED_MODULE_4___default()('**/*', {
@@ -59226,26 +59262,27 @@ const run = async () => {
             info('Branch SHA', parent);
             // Get existing files in the target repository for deletion detection
             const syncPaths = files.right.map((f) => f.to);
+            const allConfiguredPathsArray = Array.from(allConfiguredPaths);
             const uniquePaths = [
-                ...new Set(syncPaths.map((p) => {
+                ...new Set(allConfiguredPathsArray.map((p) => {
                     const dir = node_path__WEBPACK_IMPORTED_MODULE_1__.dirname(p);
                     return dir === '.' ? '' : dir;
                 })),
             ];
             let filesToDelete = [];
-            // Only check for files to delete if we have sync paths to manage
-            if (syncPaths.length > 0) {
+            // Only check for files to delete if we have configured paths to manage
+            if (allConfiguredPathsArray.length > 0) {
                 // Get all existing files if we need to check root directory, otherwise filter by paths
                 const hasRootFiles = uniquePaths.includes('');
-                const nonRootPaths = uniquePaths.filter(p => p !== '');
-                const pathsToCheck = hasRootFiles ? undefined : (nonRootPaths.length > 0 ? nonRootPaths : undefined);
+                const nonRootPaths = uniquePaths.filter((p) => p !== '');
+                const pathsToCheck = hasRootFiles ? undefined : nonRootPaths.length > 0 ? nonRootPaths : undefined;
                 const existingFiles = await repo.getTreeFiles(parent, pathsToCheck)();
                 if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isLeft(existingFiles)) {
                     _actions_core__WEBPACK_IMPORTED_MODULE_2__.setFailed(`${id} - Get existing files error: ${existingFiles.left.message}`);
                     return 1;
                 }
                 // Determine files to delete
-                const syncFilePaths = new Set(files.right.map((f) => f.to));
+                const currentSyncFilePaths = new Set(files.right.map((f) => f.to));
                 filesToDelete = existingFiles.right.filter((file) => {
                     // Check if this existing file should be managed by this sync pattern
                     const isInSyncScope = uniquePaths.some((p) => {
@@ -59258,8 +59295,8 @@ const run = async () => {
                             return file.path.startsWith(p + '/') || file.path === p;
                         }
                     });
-                    // File should be deleted if it's in scope but not in the sync list
-                    return isInSyncScope && !syncFilePaths.has(file.path);
+                    // File should be deleted if it's in scope but not in the current sync list
+                    return isInSyncScope && !currentSyncFilePaths.has(file.path);
                 });
             }
             // Prepare files for commit (additions/modifications + deletions)

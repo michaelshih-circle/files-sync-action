@@ -64,7 +64,36 @@ const run = async (): Promise<number> => {
 
     core.debug(`patterns.${i} - merged config: ${json(cfg)}`);
 
-    // Resolve files
+    // Resolve files and collect all configured paths
+    const allConfiguredPaths = new Set<string>();
+
+    // First, collect all configured file paths (whether they exist or not)
+    for (const f of entry.files) {
+      const file = typeof f === 'string' ? { from: f, to: f } : f;
+
+      try {
+        const filepath = path.resolve(cwd, file.from);
+        const stat = await fs.stat(filepath);
+
+        if (stat.isDirectory()) {
+          const list = await glob('**/*', {
+            absolute: false,
+            onlyFiles: true,
+            cwd: path.join(cwd, file.from),
+          });
+          for (const p of list) {
+            allConfiguredPaths.add(path.join(file.to, p));
+          }
+        } else {
+          allConfiguredPaths.add(file.to);
+        }
+      } catch {
+        // File/directory doesn't exist locally, but it's still a configured path
+        allConfiguredPaths.add(file.to);
+      }
+    }
+
+    // Then resolve only existing files
     const files = await pipe(
       entry.files.map((f, j) => {
         const id = `patterns.${i}.files.${j}`;
@@ -84,7 +113,19 @@ const run = async (): Promise<number> => {
                   };
 
             const filepath = path.resolve(cwd, file.from);
-            const stat = await fs.stat(filepath);
+
+            // Check if file/directory exists
+            let stat;
+            try {
+              stat = await fs.stat(filepath);
+            } catch {
+              // File doesn't exist, return empty array
+              core.info(
+                `${id} - File/directory "${file.from}" doesn't exist, will be deleted from target repositories`,
+              );
+              return [];
+            }
+
             let paths: [from: string, to: string][];
 
             if (stat.isDirectory()) {
@@ -191,9 +232,10 @@ const run = async (): Promise<number> => {
 
       // Get existing files in the target repository for deletion detection
       const syncPaths = files.right.map((f) => f.to);
+      const allConfiguredPathsArray = Array.from(allConfiguredPaths);
       const uniquePaths = [
         ...new Set(
-          syncPaths.map((p) => {
+          allConfiguredPathsArray.map((p) => {
             const dir = path.dirname(p);
             return dir === '.' ? '' : dir;
           }),
@@ -202,8 +244,8 @@ const run = async (): Promise<number> => {
 
       let filesToDelete: { path: string; sha: string }[] = [];
 
-      // Only check for files to delete if we have sync paths to manage
-      if (syncPaths.length > 0) {
+      // Only check for files to delete if we have configured paths to manage
+      if (allConfiguredPathsArray.length > 0) {
         // Get all existing files if we need to check root directory, otherwise filter by paths
         const hasRootFiles = uniquePaths.includes('');
         const nonRootPaths = uniquePaths.filter((p) => p !== '');
@@ -216,7 +258,7 @@ const run = async (): Promise<number> => {
         }
 
         // Determine files to delete
-        const syncFilePaths = new Set(files.right.map((f) => f.to));
+        const currentSyncFilePaths = new Set(files.right.map((f) => f.to));
         filesToDelete = existingFiles.right.filter((file) => {
           // Check if this existing file should be managed by this sync pattern
           const isInSyncScope = uniquePaths.some((p) => {
@@ -229,8 +271,8 @@ const run = async (): Promise<number> => {
             }
           });
 
-          // File should be deleted if it's in scope but not in the sync list
-          return isInSyncScope && !syncFilePaths.has(file.path);
+          // File should be deleted if it's in scope but not in the current sync list
+          return isInSyncScope && !currentSyncFilePaths.has(file.path);
         });
       }
 
