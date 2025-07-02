@@ -49,8 +49,9 @@ export type CommitFileMode = '100644' | '100755' | '040000' | '160000' | '120000
 
 export type CommitFile = {
   path: string;
-  mode: CommitFileMode;
-  content: string;
+  mode?: CommitFileMode;
+  content?: string;
+  sha?: string | null; // null means delete the file
 };
 
 export type CommitDiffEntry = {
@@ -87,6 +88,12 @@ export enum MergeResult {
   Merged = 'The pull request was merged.',
 }
 
+export type TreeEntry = {
+  path: string;
+  type: 'blob' | 'tree';
+  sha: string;
+};
+
 export type GitHubRepository = {
   owner: string;
   name: string;
@@ -94,6 +101,7 @@ export type GitHubRepository = {
   deleteBranch: (name: string) => TE.TaskEither<Error, void>;
   commit: (params: GitHubRepositoryCommitParams) => TE.TaskEither<Error, Commit>;
   compareCommits: (base: string, head: string) => TE.TaskEither<Error, CommitDiffEntry[]>;
+  getTreeFiles: (sha: string, paths?: string[]) => TE.TaskEither<Error, TreeEntry[]>;
   findExistingPullRequestByBranch: (branch: string) => TE.TaskEither<Error, PullRequest | null>;
   closePullRequest: (number: number) => TE.TaskEither<Error, void>;
   createOrUpdatePullRequest: (
@@ -309,9 +317,13 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
           ...defaults,
           base_tree: parent,
           tree: files.map((file) => ({
-            mode: file.mode,
             path: file.path,
-            content: file.content,
+            ...(file.sha === null
+              ? { sha: null } // Delete file
+              : {
+                  mode: file.mode!,
+                  content: file.content!,
+                }), // Add/modify file
           })),
         });
 
@@ -342,6 +354,29 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
         });
 
         return diff.files!;
+      }, handleErrorReason),
+
+      getTreeFiles: TE.tryCatchK(async (sha, paths) => {
+        const { data: tree } = await octokit.rest.git.getTree({
+          ...defaults,
+          tree_sha: sha,
+          recursive: 'true',
+        });
+
+        let files = tree.tree
+          .filter((item) => item.type === 'blob')
+          .map((item) => ({
+            path: item.path!,
+            type: 'blob' as const,
+            sha: item.sha!,
+          }));
+
+        // Filter by paths if provided
+        if (paths && paths.length > 0) {
+          files = files.filter((file) => paths.some((p) => file.path.startsWith(p)));
+        }
+
+        return files;
       }, handleErrorReason),
 
       findExistingPullRequestByBranch: TE.tryCatchK(async (branch) => {

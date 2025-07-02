@@ -189,6 +189,78 @@ const run = async (): Promise<number> => {
       }
       info('Branch SHA', parent);
 
+      // Get existing files in the target repository for deletion detection
+      const syncPaths = files.right.map((f) => f.to);
+      const uniquePaths = [
+        ...new Set(
+          syncPaths.map((p) => {
+            const dir = path.dirname(p);
+            return dir === '.' ? '' : dir;
+          }),
+        ),
+      ].filter(Boolean);
+
+      let filesToDelete: { path: string; sha: string }[] = [];
+
+      // Only check for files to delete if we have sync paths to manage
+      if (syncPaths.length > 0 && uniquePaths.length > 0) {
+        const existingFiles = await repo.getTreeFiles(parent, uniquePaths)();
+        if (T.isLeft(existingFiles)) {
+          core.setFailed(`${id} - Get existing files error: ${existingFiles.left.message}`);
+          return 1;
+        }
+
+        // Determine files to delete
+        const syncFilePaths = new Set(files.right.map((f) => f.to));
+        filesToDelete = existingFiles.right.filter((file) => {
+          // Check if this existing file should be managed by this sync pattern
+          const isInSyncScope = uniquePaths.some((p) => file.path.startsWith(p + '/') || file.path === p);
+
+          // File should be deleted if it's in scope but not in the sync list
+          return isInSyncScope && !syncFilePaths.has(file.path);
+        });
+      }
+
+      // Prepare files for commit (additions/modifications + deletions)
+      const commitFiles = [
+        ...files.right.map((file) => ({
+          path: file.to,
+          mode: file.mode,
+          content: file.content,
+        })),
+        ...filesToDelete.map((file) => ({
+          path: file.path,
+          sha: null as string | null, // null means delete
+        })),
+      ];
+
+      // Skip commit if no files to sync and no files to delete
+      if (commitFiles.length === 0) {
+        info('Status', 'No files to sync, skipping commit');
+
+        // If there's an existing PR, close it and delete the branch
+        if (existingPr.right !== null) {
+          const res = await repo.closePullRequest(existingPr.right.number)();
+          if (T.isLeft(res)) {
+            core.setFailed(`${id} - Close pull request error: ${res.left.message}`);
+            return 1;
+          }
+          core.debug(`${name}: #${existingPr.right.number} closed`);
+        }
+
+        const res = await repo.deleteBranch(branch)();
+        if (T.isLeft(res)) {
+          core.setFailed(`${id} - Delete branch error: ${res.left.message}`);
+          return 1;
+        }
+        core.debug(`${name}: branch "${branch}" deleted`);
+        continue;
+      }
+
+      if (filesToDelete.length > 0) {
+        info('Files to delete', filesToDelete.map((f) => f.path).join(', '));
+      }
+
       // Commit files
       const commit = await repo.commit({
         parent,
@@ -202,11 +274,7 @@ const run = async (): Promise<number> => {
           repository: GH_REPOSITORY,
           index: i,
         }),
-        files: files.right.map((file) => ({
-          path: file.to,
-          mode: file.mode,
-          content: file.content,
-        })),
+        files: commitFiles,
         force: cfg.pull_request.force,
       })();
       if (T.isLeft(commit)) {
@@ -266,10 +334,16 @@ const run = async (): Promise<number> => {
             number: GH_RUN_NUMBER,
             url: `${GH_SERVER}/${GH_REPOSITORY}/actions/runs/${GH_RUN_ID}`,
           },
-          changes: diff.right.map((d) => ({
-            from: files.right.find((f) => f.to === d.filename)?.from,
-            to: d.filename,
-          })),
+          changes: diff.right.map((d) => {
+            const syncFile = files.right.find((f) => f.to === d.filename);
+            const isDeleted = filesToDelete.some((f) => f.path === d.filename);
+
+            return {
+              from: syncFile?.from,
+              to: d.filename,
+              deleted: isDeleted,
+            };
+          }),
           index: i,
         }),
         branch,
