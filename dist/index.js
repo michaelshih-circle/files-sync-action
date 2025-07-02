@@ -58845,15 +58845,23 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
             const { data: tree } = await octokit.rest.git.createTree({
                 ...defaults,
                 base_tree: parent,
-                tree: files.map((file) => ({
-                    path: file.path,
-                    ...(file.sha === null
-                        ? { sha: null } // Delete file
-                        : {
+                tree: files.map((file) => {
+                    if (file.sha === null) {
+                        // Delete file
+                        return {
+                            path: file.path,
+                            sha: null,
+                        };
+                    }
+                    else {
+                        // Add/modify file
+                        return {
+                            path: file.path,
                             mode: file.mode,
                             content: file.content,
-                        }), // Add/modify file
-                })),
+                        };
+                    }
+                }),
             });
             // commit
             const { data: commit } = await octokit.rest.git.createCommit({
