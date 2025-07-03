@@ -58643,13 +58643,23 @@ This PR contains the following updates:
 
 <%_ for (const file of changes) { -%>
 <% if (file.deleted) { -%>
-- :x: **Deleted**: \`<%- file.to %>\`
+- :x: **Deleted**: \`<%- file.to %>\`<% if (file.pull_request_title) { %> (from PR: [#<%- file.pull_request_number %>] <%- file.pull_request_title %>)<% } %>
 <% } else if (file.from === file.to) { -%>
-- \`<%- file.to %>\`
+- \`<%- file.to %>\`<% if (file.pull_request_title) { %> (from PR: [#<%- file.pull_request_number %>] <%- file.pull_request_title %>)<% } %>
 <% } else { -%>
-- \`<%- file.from %>\` to \`<%- file.to %>\`
+- \`<%- file.from %>\` to \`<%- file.to %>\`<% if (file.pull_request_title) { %> (from PR: [#<%- file.pull_request_number %>] <%- file.pull_request_title %>)<% } %>
 <% } -%>
 <%_ } -%>
+
+<% if (pull_request_titles.length > 0) { -%>
+---
+
+### Pull Requests Created
+
+<%_ for (const prTitle of pull_request_titles) { -%>
+<%- prTitle %>
+<%_ } -%>
+<% } -%>
     `.trim(),
         reviewers: [],
         assignees: [],
@@ -59125,18 +59135,21 @@ const info = (key, value) => _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`${
 const run = async () => {
     const cwd = process.cwd();
     const inputs = (0,_inputs_js__WEBPACK_IMPORTED_MODULE_9__/* .getInputs */ .G)();
-    // Get current repository's PR titles if triggered by pull_request event
-    const currentPrTitles = [];
+    // Get current repository's PR information if triggered by pull_request event
+    let currentPrInfo = null;
     const eventPath = process.env['GITHUB_EVENT_PATH'];
     if (eventPath) {
         try {
             const event = JSON.parse(await node_fs_promises__WEBPACK_IMPORTED_MODULE_0__.readFile(eventPath, 'utf8'));
             if (event.pull_request && event.pull_request.title) {
-                currentPrTitles.push(event.pull_request.title);
+                currentPrInfo = {
+                    title: event.pull_request.title,
+                    number: event.pull_request.number,
+                };
             }
         }
         catch (e) {
-            // If we can't read the event or it's not a PR event, continue without PR titles
+            // If we can't read the event or it's not a PR event, continue without PR info
             _actions_core__WEBPACK_IMPORTED_MODULE_2__.debug(`Could not read GitHub event: ${e}`);
         }
     }
@@ -59479,10 +59492,12 @@ const run = async () => {
                             from: syncFile?.from,
                             to: d.filename,
                             deleted: isDeleted,
+                            pull_request_title: currentPrInfo?.title || null,
+                            pull_request_number: currentPrInfo?.number || null,
                         };
                     }),
                     index: i,
-                    pull_request_titles: currentPrTitles,
+                    pull_request_titles: currentPrInfo ? [currentPrInfo.title] : [],
                 }),
                 branch,
             })();

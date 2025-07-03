@@ -31,17 +31,20 @@ const run = async (): Promise<number> => {
 
   const inputs = getInputs();
 
-  // Get current repository's PR titles if triggered by pull_request event
-  const currentPrTitles: string[] = [];
+  // Get current repository's PR information if triggered by pull_request event
+  let currentPrInfo: { title: string; number: number } | null = null;
   const eventPath = process.env['GITHUB_EVENT_PATH'];
   if (eventPath) {
     try {
       const event = JSON.parse(await fs.readFile(eventPath, 'utf8'));
       if (event.pull_request && event.pull_request.title) {
-        currentPrTitles.push(event.pull_request.title);
+        currentPrInfo = {
+          title: event.pull_request.title,
+          number: event.pull_request.number,
+        };
       }
     } catch (e) {
-      // If we can't read the event or it's not a PR event, continue without PR titles
+      // If we can't read the event or it's not a PR event, continue without PR info
       core.debug(`Could not read GitHub event: ${e}`);
     }
   }
@@ -451,10 +454,12 @@ const run = async (): Promise<number> => {
               from: syncFile?.from,
               to: d.filename,
               deleted: isDeleted,
+              pull_request_title: currentPrInfo?.title || null,
+              pull_request_number: currentPrInfo?.number || null,
             };
           }),
           index: i,
-          pull_request_titles: currentPrTitles,
+          pull_request_titles: currentPrInfo ? [currentPrInfo.title] : [],
         }),
         branch,
       })();

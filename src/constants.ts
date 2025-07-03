@@ -42,13 +42,23 @@ This PR contains the following updates:
 
 <%_ for (const file of changes) { -%>
 <% if (file.deleted) { -%>
-- :x: **Deleted**: \`<%- file.to %>\`
+- :x: **Deleted**: \`<%- file.to %>\`<% if (file.pull_request_title) { %> (from PR: [#<%- file.pull_request_number %>] <%- file.pull_request_title %>)<% } %>
 <% } else if (file.from === file.to) { -%>
-- \`<%- file.to %>\`
+- \`<%- file.to %>\`<% if (file.pull_request_title) { %> (from PR: [#<%- file.pull_request_number %>] <%- file.pull_request_title %>)<% } %>
 <% } else { -%>
-- \`<%- file.from %>\` to \`<%- file.to %>\`
+- \`<%- file.from %>\` to \`<%- file.to %>\`<% if (file.pull_request_title) { %> (from PR: [#<%- file.pull_request_number %>] <%- file.pull_request_title %>)<% } %>
 <% } -%>
 <%_ } -%>
+
+<% if (pull_request_titles.length > 0) { -%>
+---
+
+### Pull Requests Created
+
+<%_ for (const prTitle of pull_request_titles) { -%>
+<%- prTitle %>
+<%_ } -%>
+<% } -%>
     `.trim(),
     reviewers: [] as string[],
     assignees: [] as string[],
