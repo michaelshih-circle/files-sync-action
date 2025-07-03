@@ -58843,77 +58843,86 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
             });
         }, handleErrorReason),
         commit: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async ({ parent, branch, files, message, force }) => {
-            // create tree
-            const treeEntries = files.map((file) => {
-                if (file.sha === null) {
-                    // Delete file - GitHub API needs path, mode, type, and sha: null
-                    console.log(`Debug - Delete entry: path="${file.path}", mode="${file.mode}", type="blob", sha=null`);
-                    return {
+            console.log(`Debug - Starting commit process with ${files.length} files`);
+            // Use Contents API for simpler file operations
+            const deletions = files.filter(file => file.sha === null);
+            const additions = files.filter(file => file.sha !== null);
+            console.log(`Debug - ${additions.length} additions/modifications, ${deletions.length} deletions`);
+            // For now, let's handle deletions using Contents API (one by one)
+            for (const file of deletions) {
+                console.log(`Debug - Deleting file: ${file.path}`);
+                try {
+                    // Get file info to get its SHA
+                    const { data: fileInfo } = await octokit.rest.repos.getContent({
+                        ...defaults,
                         path: file.path,
-                        mode: file.mode,
-                        type: 'blob',
-                        sha: null,
-                    };
+                        ref: branch,
+                    });
+                    if ('sha' in fileInfo) {
+                        // Delete the file
+                        await octokit.rest.repos.deleteFile({
+                            ...defaults,
+                            path: file.path,
+                            message: `Delete ${file.path}`,
+                            sha: fileInfo.sha,
+                            branch: branch,
+                        });
+                        console.log(`Debug - Successfully deleted: ${file.path}`);
+                    }
                 }
-                else {
-                    // Add/modify file
-                    console.log(`Debug - Add/modify entry: path="${file.path}", mode="${file.mode}"`);
-                    return {
-                        path: file.path,
-                        mode: file.mode,
-                        content: file.content,
-                    };
+                catch (error) {
+                    console.log(`Debug - Error deleting ${file.path}:`, error);
+                    // File might not exist, continue
                 }
-            });
-            console.log(`Debug - About to create tree with ${treeEntries.length} entries, base_tree: ${parent}`);
-            console.log(`Debug - Tree entries:`, JSON.stringify(treeEntries, null, 2));
-            // Check if we're creating an empty tree (all deletions)
-            const hasNonDeletionEntries = treeEntries.some((entry) => entry.sha !== null);
-            if (!hasNonDeletionEntries && treeEntries.length > 0) {
-                console.log(`Debug - WARNING: All entries are deletions, this will create an empty tree`);
-                console.log(`Debug - Using special handling for all-deletion case`);
-                // For all-deletion case, create an empty tree without base_tree
-                const { data: tree } = await octokit.rest.git.createTree({
-                    ...defaults,
-                    tree: [], // Empty tree
-                });
-                console.log(`Debug - Created empty tree successfully: ${tree.sha}`);
-                // commit
-                const { data: commit } = await octokit.rest.git.createCommit({
-                    ...defaults,
-                    tree: tree.sha,
-                    message,
-                    parents: [parent],
-                });
-                // apply to branch
-                await octokit.rest.git.updateRef({
-                    ...defaults,
-                    ref: `heads/${branch}`,
-                    sha: commit.sha,
-                    force,
-                });
-                return commit;
             }
-            const { data: tree } = await octokit.rest.git.createTree({
-                ...defaults,
-                base_tree: parent,
-                tree: treeEntries,
-            });
-            // commit
-            const { data: commit } = await octokit.rest.git.createCommit({
-                ...defaults,
-                tree: tree.sha,
-                message,
-                parents: [parent],
-            });
-            // apply to branch
-            await octokit.rest.git.updateRef({
+            // For additions/modifications, use Contents API too
+            for (const file of additions) {
+                console.log(`Debug - Adding/updating file: ${file.path}`);
+                try {
+                    // Try to get existing file SHA
+                    let sha;
+                    try {
+                        const { data: fileInfo } = await octokit.rest.repos.getContent({
+                            ...defaults,
+                            path: file.path,
+                            ref: branch,
+                        });
+                        if ('sha' in fileInfo) {
+                            sha = fileInfo.sha;
+                        }
+                    }
+                    catch {
+                        // File doesn't exist, that's OK
+                    }
+                    // Create or update file
+                    await octokit.rest.repos.createOrUpdateFileContents({
+                        ...defaults,
+                        path: file.path,
+                        message: `Update ${file.path}`,
+                        content: Buffer.from(file.content).toString('base64'),
+                        branch: branch,
+                        ...(sha && { sha }),
+                    });
+                    console.log(`Debug - Successfully added/updated: ${file.path}`);
+                }
+                catch (error) {
+                    console.log(`Debug - Error adding/updating ${file.path}:`, error);
+                    throw error;
+                }
+            }
+            // Get the latest commit on the branch to return
+            const { data: branchInfo } = await octokit.rest.git.getRef({
                 ...defaults,
                 ref: `heads/${branch}`,
-                sha: commit.sha,
-                force,
             });
-            return commit;
+            const { data: finalCommit } = await octokit.rest.git.getCommit({
+                ...defaults,
+                commit_sha: branchInfo.object.sha,
+            });
+            return {
+                sha: finalCommit.sha,
+                message: finalCommit.message,
+            };
         }, handleErrorReason),
         compareCommits: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async (base, head) => {
             const { data: diff } = await octokit.rest.repos.compareCommits({
