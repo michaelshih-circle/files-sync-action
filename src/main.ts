@@ -469,30 +469,42 @@ const run = async (): Promise<number> => {
             number: GH_RUN_NUMBER,
             url: `${GH_SERVER}/${GH_REPOSITORY}/actions/runs/${GH_RUN_ID}`,
           },
-          changes: await Promise.all(
-            diff.right.map(async (d: any) => {
-              const syncFile = files.right.find((f) => f.to === d.filename);
-              const isDeleted = filesToDelete.some((f) => f.path === d.filename);
+          ...(await (async () => {
+            // Collect all unique PR info
+            const allPrInfo = new Set<string>();
 
-              // Get PR info for this specific file
-              const sourceFilePath = syncFile?.from || d.filename;
-              core.info(`Processing file: ${d.filename}, source: ${sourceFilePath}`);
-              const prInfo = await getPrInfoForFile(sourceFilePath);
+            const fileChanges = await Promise.all(
+              diff.right.map(async (d: any) => {
+                const syncFile = files.right.find((f) => f.to === d.filename);
+                const isDeleted = filesToDelete.some((f) => f.path === d.filename);
 
-              const result = {
-                from: syncFile?.from,
-                to: d.filename,
-                deleted: isDeleted,
-                pull_request_title: prInfo?.title || null,
-                pull_request_number: prInfo?.number || null,
-              };
+                // Get PR info for this specific file
+                const sourceFilePath = syncFile?.from || d.filename;
+                core.info(`Processing file: ${d.filename}, source: ${sourceFilePath}`);
+                const prInfo = await getPrInfoForFile(sourceFilePath);
 
-              core.info(`File ${d.filename} PR info: ${prInfo ? `#${prInfo.number} ${prInfo.title}` : 'none'}`);
-              return result;
-            }),
-          ),
+                // Add PR info to the set if found
+                if (prInfo) {
+                  allPrInfo.add(`#${prInfo.number} ${prInfo.title}`);
+                  core.info(`File ${d.filename} PR info: #${prInfo.number} ${prInfo.title}`);
+                } else {
+                  core.info(`File ${d.filename} PR info: none`);
+                }
+
+                return {
+                  from: syncFile?.from,
+                  to: d.filename,
+                  deleted: isDeleted,
+                };
+              }),
+            );
+
+            return {
+              changes: fileChanges,
+              pull_request_titles: Array.from(allPrInfo),
+            };
+          })()),
           index: i,
-          pull_request_titles: [],
         }),
         branch,
       })();

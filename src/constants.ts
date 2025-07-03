@@ -42,21 +42,21 @@ This PR contains the following updates:
 
 <%_ for (const file of changes) { -%>
 <% if (file.deleted) { -%>
-- :x: **Deleted**: \`<%- file.to %>\`<% if (file.pull_request_title) { %> (from PR: [#<%- file.pull_request_number %>] <%- file.pull_request_title %>)<% } %>
+- :x: **Deleted**: \`<%- file.to %>\`
 <% } else if (file.from === file.to) { -%>
-- \`<%- file.to %>\`<% if (file.pull_request_title) { %> (from PR: [#<%- file.pull_request_number %>] <%- file.pull_request_title %>)<% } %>
+- \`<%- file.to %>\`
 <% } else { -%>
-- \`<%- file.from %>\` to \`<%- file.to %>\`<% if (file.pull_request_title) { %> (from PR: [#<%- file.pull_request_number %>] <%- file.pull_request_title %>)<% } %>
+- \`<%- file.from %>\` to \`<%- file.to %>\`
 <% } -%>
 <%_ } -%>
 
 <% if (pull_request_titles.length > 0) { -%>
 ---
 
-### Pull Requests Created
+### Related Pull Requests
 
 <%_ for (const prTitle of pull_request_titles) { -%>
-<%- prTitle %>
+- <%- prTitle %>
 <%_ } -%>
 <% } -%>
     `.trim(),

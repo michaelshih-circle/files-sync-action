@@ -58643,21 +58643,21 @@ This PR contains the following updates:
 
 <%_ for (const file of changes) { -%>
 <% if (file.deleted) { -%>
-- :x: **Deleted**: \`<%- file.to %>\`<% if (file.pull_request_title) { %> (from PR: [#<%- file.pull_request_number %>] <%- file.pull_request_title %>)<% } %>
+- :x: **Deleted**: \`<%- file.to %>\`
 <% } else if (file.from === file.to) { -%>
-- \`<%- file.to %>\`<% if (file.pull_request_title) { %> (from PR: [#<%- file.pull_request_number %>] <%- file.pull_request_title %>)<% } %>
+- \`<%- file.to %>\`
 <% } else { -%>
-- \`<%- file.from %>\` to \`<%- file.to %>\`<% if (file.pull_request_title) { %> (from PR: [#<%- file.pull_request_number %>] <%- file.pull_request_title %>)<% } %>
+- \`<%- file.from %>\` to \`<%- file.to %>\`
 <% } -%>
 <%_ } -%>
 
 <% if (pull_request_titles.length > 0) { -%>
 ---
 
-### Pull Requests Created
+### Related Pull Requests
 
 <%_ for (const prTitle of pull_request_titles) { -%>
-<%- prTitle %>
+- <%- prTitle %>
 <%_ } -%>
 <% } -%>
     `.trim(),
@@ -58972,7 +58972,7 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
                 direction: 'desc',
                 per_page: 100,
             });
-            // Get open PRs  
+            // Get open PRs
             const { data: openPrs } = await octokit.rest.pulls.list({
                 ...defaults,
                 state: 'open',
@@ -59573,25 +59573,36 @@ const run = async () => {
                         number: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_NUMBER */ .$H,
                         url: `${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_SERVER */ .WL}/${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf}/actions/runs/${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_ID */ .oR}`,
                     },
-                    changes: await Promise.all(diff.right.map(async (d) => {
-                        const syncFile = files.right.find((f) => f.to === d.filename);
-                        const isDeleted = filesToDelete.some((f) => f.path === d.filename);
-                        // Get PR info for this specific file
-                        const sourceFilePath = syncFile?.from || d.filename;
-                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Processing file: ${d.filename}, source: ${sourceFilePath}`);
-                        const prInfo = await getPrInfoForFile(sourceFilePath);
-                        const result = {
-                            from: syncFile?.from,
-                            to: d.filename,
-                            deleted: isDeleted,
-                            pull_request_title: prInfo?.title || null,
-                            pull_request_number: prInfo?.number || null,
+                    ...(await (async () => {
+                        // Collect all unique PR info
+                        const allPrInfo = new Set();
+                        const fileChanges = await Promise.all(diff.right.map(async (d) => {
+                            const syncFile = files.right.find((f) => f.to === d.filename);
+                            const isDeleted = filesToDelete.some((f) => f.path === d.filename);
+                            // Get PR info for this specific file
+                            const sourceFilePath = syncFile?.from || d.filename;
+                            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Processing file: ${d.filename}, source: ${sourceFilePath}`);
+                            const prInfo = await getPrInfoForFile(sourceFilePath);
+                            // Add PR info to the set if found
+                            if (prInfo) {
+                                allPrInfo.add(`#${prInfo.number} ${prInfo.title}`);
+                                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`File ${d.filename} PR info: #${prInfo.number} ${prInfo.title}`);
+                            }
+                            else {
+                                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`File ${d.filename} PR info: none`);
+                            }
+                            return {
+                                from: syncFile?.from,
+                                to: d.filename,
+                                deleted: isDeleted,
+                            };
+                        }));
+                        return {
+                            changes: fileChanges,
+                            pull_request_titles: Array.from(allPrInfo),
                         };
-                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`File ${d.filename} PR info: ${prInfo ? `#${prInfo.number} ${prInfo.title}` : 'none'}`);
-                        return result;
-                    })),
+                    })()),
                     index: i,
-                    pull_request_titles: [],
                 }),
                 branch,
             })();
