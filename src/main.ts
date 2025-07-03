@@ -460,52 +460,69 @@ const run = async (): Promise<number> => {
           repository: GH_REPOSITORY,
           index: i,
         }),
-        body: render([cfg.pull_request.body, PR_FOOTER].join('\n'), {
-          github: GH_SERVER,
-          repository: GH_REPOSITORY,
-          workflow: GH_WORKFLOW,
-          run: {
-            id: GH_RUN_ID,
-            number: GH_RUN_NUMBER,
-            url: `${GH_SERVER}/${GH_REPOSITORY}/actions/runs/${GH_RUN_ID}`,
-          },
-          ...(await (async () => {
-            // Collect all unique PR info
-            const allPrInfo = new Set<string>();
+        body: await (async () => {
+          try {
+            const templateData = await (async () => {
+              // Collect all unique PR info
+              const allPrInfo = new Set<string>();
 
-            const fileChanges = await Promise.all(
-              diff.right.map(async (d: any) => {
-                const syncFile = files.right.find((f) => f.to === d.filename);
-                const isDeleted = filesToDelete.some((f) => f.path === d.filename);
+              const fileChanges = await Promise.all(
+                diff.right.map(async (d: any) => {
+                  const syncFile = files.right.find((f) => f.to === d.filename);
+                  const isDeleted = filesToDelete.some((f) => f.path === d.filename);
 
-                // Get PR info for this specific file
-                const sourceFilePath = syncFile?.from || d.filename;
-                core.info(`Processing file: ${d.filename}, source: ${sourceFilePath}`);
-                const prInfo = await getPrInfoForFile(sourceFilePath);
+                  // Get PR info for this specific file
+                  const sourceFilePath = syncFile?.from || d.filename;
+                  core.info(`Processing file: ${d.filename}, source: ${sourceFilePath}`);
+                  const prInfo = await getPrInfoForFile(sourceFilePath);
 
-                // Add PR info to the set if found
-                if (prInfo) {
-                  allPrInfo.add(`#${prInfo.number} ${prInfo.title}`);
-                  core.info(`File ${d.filename} PR info: #${prInfo.number} ${prInfo.title}`);
-                } else {
-                  core.info(`File ${d.filename} PR info: none`);
-                }
+                  // Add PR info to the set if found
+                  if (prInfo) {
+                    allPrInfo.add(`#${prInfo.number} ${prInfo.title}`);
+                    core.info(`File ${d.filename} PR info: #${prInfo.number} ${prInfo.title}`);
+                  } else {
+                    core.info(`File ${d.filename} PR info: none`);
+                  }
 
-                return {
-                  from: syncFile?.from,
-                  to: d.filename,
-                  deleted: isDeleted,
-                };
-              }),
-            );
+                  return {
+                    from: syncFile?.from,
+                    to: d.filename,
+                    deleted: isDeleted,
+                  };
+                }),
+              );
 
-            return {
-              changes: fileChanges,
-              pull_request_titles: Array.from(allPrInfo),
+              const prTitles = Array.from(allPrInfo) || [];
+              core.info(`Template variables: changes=${fileChanges.length}, pull_request_titles=${prTitles.length}`);
+              core.info(`PR titles: ${JSON.stringify(prTitles)}`);
+
+              return {
+                changes: fileChanges,
+                pull_request_titles: prTitles,
+              };
+            })();
+
+            const templateVars = {
+              github: GH_SERVER,
+              repository: GH_REPOSITORY,
+              workflow: GH_WORKFLOW,
+              run: {
+                id: GH_RUN_ID,
+                number: GH_RUN_NUMBER,
+                url: `${GH_SERVER}/${GH_REPOSITORY}/actions/runs/${GH_RUN_ID}`,
+              },
+              ...templateData,
+              index: i,
             };
-          })()),
-          index: i,
-        }),
+
+            core.info(`About to render template with variables: ${Object.keys(templateVars).join(', ')}`);
+            return render([cfg.pull_request.body, PR_FOOTER].join('\n'), templateVars);
+          } catch (error) {
+            core.setFailed(`Template rendering error: ${error}`);
+            core.info(`Template body: ${cfg.pull_request.body}`);
+            throw error;
+          }
+        })(),
         branch,
       })();
       if (T.isLeft(pr)) {

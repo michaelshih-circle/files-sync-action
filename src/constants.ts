@@ -50,7 +50,7 @@ This PR contains the following updates:
 <% } -%>
 <%_ } -%>
 
-<% if (pull_request_titles.length > 0) { -%>
+<% if (pull_request_titles && pull_request_titles.length > 0) { -%>
 ---
 
 ### Related Pull Requests

@@ -58651,7 +58651,7 @@ This PR contains the following updates:
 <% } -%>
 <%_ } -%>
 
-<% if (pull_request_titles.length > 0) { -%>
+<% if (pull_request_titles && pull_request_titles.length > 0) { -%>
 ---
 
 ### Related Pull Requests
@@ -59564,46 +59564,61 @@ const run = async () => {
                     repository: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf,
                     index: i,
                 }),
-                body: (0,ejs__WEBPACK_IMPORTED_MODULE_3__.render)([cfg.pull_request.body, _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .PR_FOOTER */ .jR].join('\n'), {
-                    github: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_SERVER */ .WL,
-                    repository: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf,
-                    workflow: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_WORKFLOW */ .g$,
-                    run: {
-                        id: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_ID */ .oR,
-                        number: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_NUMBER */ .$H,
-                        url: `${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_SERVER */ .WL}/${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf}/actions/runs/${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_ID */ .oR}`,
-                    },
-                    ...(await (async () => {
-                        // Collect all unique PR info
-                        const allPrInfo = new Set();
-                        const fileChanges = await Promise.all(diff.right.map(async (d) => {
-                            const syncFile = files.right.find((f) => f.to === d.filename);
-                            const isDeleted = filesToDelete.some((f) => f.path === d.filename);
-                            // Get PR info for this specific file
-                            const sourceFilePath = syncFile?.from || d.filename;
-                            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Processing file: ${d.filename}, source: ${sourceFilePath}`);
-                            const prInfo = await getPrInfoForFile(sourceFilePath);
-                            // Add PR info to the set if found
-                            if (prInfo) {
-                                allPrInfo.add(`#${prInfo.number} ${prInfo.title}`);
-                                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`File ${d.filename} PR info: #${prInfo.number} ${prInfo.title}`);
-                            }
-                            else {
-                                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`File ${d.filename} PR info: none`);
-                            }
+                body: await (async () => {
+                    try {
+                        const templateData = await (async () => {
+                            // Collect all unique PR info
+                            const allPrInfo = new Set();
+                            const fileChanges = await Promise.all(diff.right.map(async (d) => {
+                                const syncFile = files.right.find((f) => f.to === d.filename);
+                                const isDeleted = filesToDelete.some((f) => f.path === d.filename);
+                                // Get PR info for this specific file
+                                const sourceFilePath = syncFile?.from || d.filename;
+                                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Processing file: ${d.filename}, source: ${sourceFilePath}`);
+                                const prInfo = await getPrInfoForFile(sourceFilePath);
+                                // Add PR info to the set if found
+                                if (prInfo) {
+                                    allPrInfo.add(`#${prInfo.number} ${prInfo.title}`);
+                                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`File ${d.filename} PR info: #${prInfo.number} ${prInfo.title}`);
+                                }
+                                else {
+                                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`File ${d.filename} PR info: none`);
+                                }
+                                return {
+                                    from: syncFile?.from,
+                                    to: d.filename,
+                                    deleted: isDeleted,
+                                };
+                            }));
+                            const prTitles = Array.from(allPrInfo) || [];
+                            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Template variables: changes=${fileChanges.length}, pull_request_titles=${prTitles.length}`);
+                            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`PR titles: ${JSON.stringify(prTitles)}`);
                             return {
-                                from: syncFile?.from,
-                                to: d.filename,
-                                deleted: isDeleted,
+                                changes: fileChanges,
+                                pull_request_titles: prTitles,
                             };
-                        }));
-                        return {
-                            changes: fileChanges,
-                            pull_request_titles: Array.from(allPrInfo),
+                        })();
+                        const templateVars = {
+                            github: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_SERVER */ .WL,
+                            repository: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf,
+                            workflow: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_WORKFLOW */ .g$,
+                            run: {
+                                id: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_ID */ .oR,
+                                number: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_NUMBER */ .$H,
+                                url: `${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_SERVER */ .WL}/${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf}/actions/runs/${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_ID */ .oR}`,
+                            },
+                            ...templateData,
+                            index: i,
                         };
-                    })()),
-                    index: i,
-                }),
+                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`About to render template with variables: ${Object.keys(templateVars).join(', ')}`);
+                        return (0,ejs__WEBPACK_IMPORTED_MODULE_3__.render)([cfg.pull_request.body, _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .PR_FOOTER */ .jR].join('\n'), templateVars);
+                    }
+                    catch (error) {
+                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.setFailed(`Template rendering error: ${error}`);
+                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Template body: ${cfg.pull_request.body}`);
+                        throw error;
+                    }
+                })(),
                 branch,
             })();
             if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isLeft(pr)) {
