@@ -337,6 +337,42 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
           }
         });
 
+        console.log(`Debug - About to create tree with ${treeEntries.length} entries, base_tree: ${parent}`);
+        console.log(`Debug - Tree entries:`, JSON.stringify(treeEntries, null, 2));
+
+        // Check if we're creating an empty tree (all deletions)
+        const hasNonDeletionEntries = treeEntries.some((entry) => entry.sha !== null);
+        if (!hasNonDeletionEntries && treeEntries.length > 0) {
+          console.log(`Debug - WARNING: All entries are deletions, this will create an empty tree`);
+          console.log(`Debug - Using special handling for all-deletion case`);
+
+          // For all-deletion case, create an empty tree without base_tree
+          const { data: tree } = await octokit.rest.git.createTree({
+            ...defaults,
+            tree: [], // Empty tree
+          });
+
+          console.log(`Debug - Created empty tree successfully: ${tree.sha}`);
+
+          // commit
+          const { data: commit } = await octokit.rest.git.createCommit({
+            ...defaults,
+            tree: tree.sha,
+            message,
+            parents: [parent],
+          });
+
+          // apply to branch
+          await octokit.rest.git.updateRef({
+            ...defaults,
+            ref: `heads/${branch}`,
+            sha: commit.sha,
+            force,
+          });
+
+          return commit;
+        }
+
         const { data: tree } = await octokit.rest.git.createTree({
           ...defaults,
           base_tree: parent,
