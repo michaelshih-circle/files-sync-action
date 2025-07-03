@@ -58933,6 +58933,21 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
             }
             return files;
         }, handleErrorReason),
+        getLastCommitForFile: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async (filePath) => {
+            const { data: commits } = await octokit.rest.repos.listCommits({
+                ...defaults,
+                path: filePath,
+                per_page: 1,
+            });
+            if (commits.length === 0 || !commits[0]) {
+                return null;
+            }
+            const commit = commits[0];
+            return {
+                message: commit.commit.message,
+                sha: commit.sha,
+            };
+        }, handleErrorReason),
         findExistingPullRequestByBranch: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async (branch) => {
             const { data: prs } = await octokit.rest.pulls.list({
                 ...defaults,
@@ -58940,6 +58955,32 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
                 head: `${defaults.owner}:${branch}`,
             });
             return prs[0] ?? null;
+        }, handleErrorReason),
+        findPullRequestsByCommit: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async (sha) => {
+            const { data: prs } = await octokit.rest.pulls.list({
+                ...defaults,
+                state: 'closed',
+                sort: 'updated',
+                direction: 'desc',
+            });
+            // Filter PRs that contain the commit
+            const filteredPrs = [];
+            for (const pr of prs) {
+                try {
+                    const { data: commits } = await octokit.rest.pulls.listCommits({
+                        ...defaults,
+                        pull_number: pr.number,
+                    });
+                    if (commits.some(commit => commit.sha === sha)) {
+                        filteredPrs.push(pr);
+                    }
+                }
+                catch (e) {
+                    // Skip this PR if we can't get commits
+                    continue;
+                }
+            }
+            return filteredPrs;
         }, handleErrorReason),
         closePullRequest: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async (number) => {
             await octokit.rest.pulls.update({
@@ -59135,24 +59176,35 @@ const info = (key, value) => _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`${
 const run = async () => {
     const cwd = process.cwd();
     const inputs = (0,_inputs_js__WEBPACK_IMPORTED_MODULE_9__/* .getInputs */ .G)();
-    // Get current repository's PR information if triggered by pull_request event
-    let currentPrInfo = null;
-    const eventPath = process.env['GITHUB_EVENT_PATH'];
-    if (eventPath) {
+    const github = (0,_github_js__WEBPACK_IMPORTED_MODULE_8__/* .createGitHub */ .n)(inputs);
+    // Function to get PR info for a specific file
+    const getPrInfoForFile = async (filePath) => {
         try {
-            const event = JSON.parse(await node_fs_promises__WEBPACK_IMPORTED_MODULE_0__.readFile(eventPath, 'utf8'));
-            if (event.pull_request && event.pull_request.title) {
-                currentPrInfo = {
-                    title: event.pull_request.title,
-                    number: event.pull_request.number,
-                };
+            const sourceRepo = await github.initializeRepository(_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf)();
+            if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isRight(sourceRepo)) {
+                // Get the last commit that modified this file
+                const lastCommit = await sourceRepo.right.getLastCommitForFile(filePath)();
+                if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isRight(lastCommit) && lastCommit.right) {
+                    // Find PRs that contain this commit
+                    const prs = await sourceRepo.right.findPullRequestsByCommit(lastCommit.right.sha)();
+                    if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isRight(prs) && prs.right.length > 0) {
+                        // Use the first (most recent) PR
+                        const pr = prs.right[0];
+                        if (pr) {
+                            return {
+                                title: pr.title,
+                                number: pr.number,
+                            };
+                        }
+                    }
+                }
             }
         }
         catch (e) {
-            // If we can't read the event or it's not a PR event, continue without PR info
-            _actions_core__WEBPACK_IMPORTED_MODULE_2__.debug(`Could not read GitHub event: ${e}`);
+            _actions_core__WEBPACK_IMPORTED_MODULE_2__.debug(`Could not get PR info for file ${filePath}: ${e}`);
         }
-    }
+        return null;
+    };
     const config = await (0,_config_js__WEBPACK_IMPORTED_MODULE_6__/* .loadConfig */ .ME)(inputs.config_file)();
     if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isLeft(config)) {
         _actions_core__WEBPACK_IMPORTED_MODULE_2__.setFailed(`Load config error: ${inputs.config_file}#${config.left.message}`);
@@ -59160,7 +59212,6 @@ const run = async () => {
     }
     _actions_core__WEBPACK_IMPORTED_MODULE_2__.debug(`config: ${json(config.right)}`);
     const settings = config.right.settings;
-    const github = (0,_github_js__WEBPACK_IMPORTED_MODULE_8__/* .createGitHub */ .n)(inputs);
     const prUrls = new Set();
     const syncedFiles = new Set();
     for (const [i, entry] of config.right.patterns.entries()) {
@@ -59485,19 +59536,21 @@ const run = async () => {
                         number: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_NUMBER */ .$H,
                         url: `${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_SERVER */ .WL}/${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf}/actions/runs/${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_ID */ .oR}`,
                     },
-                    changes: diff.right.map((d) => {
+                    changes: await Promise.all(diff.right.map(async (d) => {
                         const syncFile = files.right.find((f) => f.to === d.filename);
                         const isDeleted = filesToDelete.some((f) => f.path === d.filename);
+                        // Get PR info for this specific file
+                        const prInfo = await getPrInfoForFile(syncFile?.from || d.filename);
                         return {
                             from: syncFile?.from,
                             to: d.filename,
                             deleted: isDeleted,
-                            pull_request_title: currentPrInfo?.title || null,
-                            pull_request_number: currentPrInfo?.number || null,
+                            pull_request_title: prInfo?.title || null,
+                            pull_request_number: prInfo?.number || null,
                         };
-                    }),
+                    })),
                     index: i,
-                    pull_request_titles: currentPrInfo ? [currentPrInfo.title] : [],
+                    pull_request_titles: [],
                 }),
                 branch,
             })();

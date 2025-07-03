@@ -30,24 +30,35 @@ const run = async (): Promise<number> => {
   const cwd = process.cwd();
 
   const inputs = getInputs();
+  const github = createGitHub(inputs);
 
-  // Get current repository's PR information if triggered by pull_request event
-  let currentPrInfo: { title: string; number: number } | null = null;
-  const eventPath = process.env['GITHUB_EVENT_PATH'];
-  if (eventPath) {
+  // Function to get PR info for a specific file
+  const getPrInfoForFile = async (filePath: string): Promise<{ title: string; number: number } | null> => {
     try {
-      const event = JSON.parse(await fs.readFile(eventPath, 'utf8'));
-      if (event.pull_request && event.pull_request.title) {
-        currentPrInfo = {
-          title: event.pull_request.title,
-          number: event.pull_request.number,
-        };
+      const sourceRepo = await github.initializeRepository(GH_REPOSITORY)();
+      if (T.isRight(sourceRepo)) {
+        // Get the last commit that modified this file
+        const lastCommit = await sourceRepo.right.getLastCommitForFile(filePath)();
+        if (T.isRight(lastCommit) && lastCommit.right) {
+          // Find PRs that contain this commit
+          const prs = await sourceRepo.right.findPullRequestsByCommit(lastCommit.right.sha)();
+          if (T.isRight(prs) && prs.right.length > 0) {
+            // Use the first (most recent) PR
+            const pr = prs.right[0];
+            if (pr) {
+              return {
+                title: pr.title,
+                number: pr.number,
+              };
+            }
+          }
+        }
       }
     } catch (e) {
-      // If we can't read the event or it's not a PR event, continue without PR info
-      core.debug(`Could not read GitHub event: ${e}`);
+      core.debug(`Could not get PR info for file ${filePath}: ${e}`);
     }
-  }
+    return null;
+  };
 
   const config = await loadConfig(inputs.config_file)();
   if (T.isLeft(config)) {
@@ -57,7 +68,6 @@ const run = async (): Promise<number> => {
   core.debug(`config: ${json(config.right)}`);
 
   const settings = config.right.settings;
-  const github = createGitHub(inputs);
   const prUrls = new Set<string>();
   const syncedFiles = new Set<string>();
 
@@ -446,20 +456,25 @@ const run = async (): Promise<number> => {
             number: GH_RUN_NUMBER,
             url: `${GH_SERVER}/${GH_REPOSITORY}/actions/runs/${GH_RUN_ID}`,
           },
-          changes: diff.right.map((d: any) => {
-            const syncFile = files.right.find((f) => f.to === d.filename);
-            const isDeleted = filesToDelete.some((f) => f.path === d.filename);
+          changes: await Promise.all(
+            diff.right.map(async (d: any) => {
+              const syncFile = files.right.find((f) => f.to === d.filename);
+              const isDeleted = filesToDelete.some((f) => f.path === d.filename);
 
-            return {
-              from: syncFile?.from,
-              to: d.filename,
-              deleted: isDeleted,
-              pull_request_title: currentPrInfo?.title || null,
-              pull_request_number: currentPrInfo?.number || null,
-            };
-          }),
+              // Get PR info for this specific file
+              const prInfo = await getPrInfoForFile(syncFile?.from || d.filename);
+
+              return {
+                from: syncFile?.from,
+                to: d.filename,
+                deleted: isDeleted,
+                pull_request_title: prInfo?.title || null,
+                pull_request_number: prInfo?.number || null,
+              };
+            }),
+          ),
           index: i,
-          pull_request_titles: currentPrInfo ? [currentPrInfo.title] : [],
+          pull_request_titles: [],
         }),
         branch,
       })();

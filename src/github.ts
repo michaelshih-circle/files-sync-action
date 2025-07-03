@@ -26,6 +26,7 @@ export type Repository = {
 
 export type PullRequest = {
   number: number;
+  title: string;
   base: {
     sha: string;
   };
@@ -103,7 +104,9 @@ export type GitHubRepository = {
   commit: (params: GitHubRepositoryCommitParams) => TE.TaskEither<Error, Commit>;
   compareCommits: (base: string, head: string) => TE.TaskEither<Error, CommitDiffEntry[]>;
   getTreeFiles: (sha: string, paths?: string[]) => TE.TaskEither<Error, TreeEntry[]>;
+  getLastCommitForFile: (filePath: string) => TE.TaskEither<Error, Commit | null>;
   findExistingPullRequestByBranch: (branch: string) => TE.TaskEither<Error, PullRequest | null>;
+  findPullRequestsByCommit: (sha: string) => TE.TaskEither<Error, PullRequest[]>;
   closePullRequest: (number: number) => TE.TaskEither<Error, void>;
   createOrUpdatePullRequest: (
     params: GitHubRepositoryCreateOrUpdatePullRequestParams,
@@ -409,6 +412,24 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
         return files;
       }, handleErrorReason),
 
+      getLastCommitForFile: TE.tryCatchK(async (filePath) => {
+        const { data: commits } = await octokit.rest.repos.listCommits({
+          ...defaults,
+          path: filePath,
+          per_page: 1,
+        });
+
+        if (commits.length === 0 || !commits[0]) {
+          return null;
+        }
+
+        const commit = commits[0];
+        return {
+          message: commit.commit.message,
+          sha: commit.sha,
+        };
+      }, handleErrorReason),
+
       findExistingPullRequestByBranch: TE.tryCatchK(async (branch) => {
         const { data: prs } = await octokit.rest.pulls.list({
           ...defaults,
@@ -417,6 +438,35 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
         });
 
         return prs[0] ?? null;
+      }, handleErrorReason),
+
+      findPullRequestsByCommit: TE.tryCatchK(async (sha) => {
+        const { data: prs } = await octokit.rest.pulls.list({
+          ...defaults,
+          state: 'closed',
+          sort: 'updated',
+          direction: 'desc',
+        });
+
+        // Filter PRs that contain the commit
+        const filteredPrs = [];
+        for (const pr of prs) {
+          try {
+            const { data: commits } = await octokit.rest.pulls.listCommits({
+              ...defaults,
+              pull_number: pr.number,
+            });
+
+            if (commits.some((commit) => commit.sha === sha)) {
+              filteredPrs.push(pr);
+            }
+          } catch (e) {
+            // Skip this PR if we can't get commits
+            continue;
+          }
+        }
+
+        return filteredPrs;
       }, handleErrorReason),
 
       closePullRequest: TE.tryCatchK(async (number) => {
