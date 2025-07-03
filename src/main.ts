@@ -66,10 +66,11 @@ const run = async (): Promise<number> => {
 
     // Resolve files and collect all configured paths
     const allConfiguredPaths = new Set<string>();
+    const excludedPaths = new Set<string>();
 
-    // First, collect all configured file paths (whether they exist or not)
+    // First, collect all configured file paths (whether they exist or not) and excluded paths
     for (const f of entry.files) {
-      const file = typeof f === 'string' ? { from: f, to: f } : f;
+      const file = typeof f === 'string' ? { from: f, to: f, exclude: [] } : { ...f, exclude: f.exclude ?? [] };
 
       try {
         const filepath = path.resolve(cwd, file.from);
@@ -81,11 +82,27 @@ const run = async (): Promise<number> => {
             onlyFiles: true,
             cwd: path.join(cwd, file.from),
           });
+
+          // Add all files to configured paths
           for (const p of list) {
             allConfiguredPaths.add(path.join(file.to, p));
           }
+
+          // Collect excluded files
+          if (file.exclude.length > 0) {
+            for (const p of list) {
+              const fromPath = path.join(file.from, p);
+              const toPath = path.join(file.to, p);
+              // Check if this file matches any exclude pattern
+              if (file.exclude.some((e) => mm.isMatch(fromPath, path.join(file.from, e)))) {
+                excludedPaths.add(toPath);
+                core.info(`Excluded file will be deleted if exists in target: ${toPath}`);
+              }
+            }
+          }
         } else {
           allConfiguredPaths.add(file.to);
+          // For single files, exclude is ignored (but we still track it)
         }
       } catch {
         // File/directory doesn't exist locally, but it's still a configured path
@@ -265,9 +282,19 @@ const run = async (): Promise<number> => {
           core.info(`  - Existing file: ${existingFile.path} (mode: ${existingFile.mode})`);
         }
 
+        if (excludedPaths.size > 0) {
+          core.info(`Excluded paths that will be deleted if found: ${Array.from(excludedPaths).join(', ')}`);
+        }
+
         // Determine files to delete
         const currentSyncFilePaths = new Set(files.right.map((f) => f.to));
         filesToDelete = existingFiles.right.filter((file) => {
+          // Check if this file is explicitly excluded (should be deleted)
+          if (excludedPaths.has(file.path)) {
+            core.info(`File marked for deletion (excluded): ${file.path}`);
+            return true;
+          }
+
           // Check if this existing file should be managed by this sync pattern
           const isInSyncScope = uniquePaths.some((p) => {
             if (p === '') {

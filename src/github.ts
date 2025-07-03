@@ -343,19 +343,6 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
         console.log(`Debug - About to create tree with ${treeEntries.length} entries`);
         console.log(`Debug - Base tree SHA: ${parent}`);
         console.log(`Debug - Full tree entries:`, JSON.stringify(treeEntries, null, 2));
-
-        // get current tree to compare
-        const { data: currentTree } = await octokit.rest.git.getTree({
-          ...defaults,
-          tree_sha: parent,
-          recursive: 'true',
-        });
-        console.log(
-          `Debug - Current tree from parent (${parent}):`,
-          JSON.stringify(currentTree.tree.slice(0, 5), null, 2),
-        );
-        console.log(`Debug - Current tree has ${currentTree.tree.length} total entries`);
-
         // Create tree
         const { data: tree } = await octokit.rest.git.createTree({
           ...defaults,

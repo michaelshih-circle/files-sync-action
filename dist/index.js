@@ -58870,14 +58870,6 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
             console.log(`Debug - About to create tree with ${treeEntries.length} entries`);
             console.log(`Debug - Base tree SHA: ${parent}`);
             console.log(`Debug - Full tree entries:`, JSON.stringify(treeEntries, null, 2));
-            // get current tree to compare
-            const { data: currentTree } = await octokit.rest.git.getTree({
-                ...defaults,
-                tree_sha: parent,
-                recursive: 'true',
-            });
-            console.log(`Debug - Current tree from parent (${parent}):`, JSON.stringify(currentTree.tree.slice(0, 5), null, 2));
-            console.log(`Debug - Current tree has ${currentTree.tree.length} total entries`);
             // Create tree
             const { data: tree } = await octokit.rest.git.createTree({
                 ...defaults,
@@ -59157,9 +59149,10 @@ const run = async () => {
         _actions_core__WEBPACK_IMPORTED_MODULE_2__.debug(`patterns.${i} - merged config: ${json(cfg)}`);
         // Resolve files and collect all configured paths
         const allConfiguredPaths = new Set();
-        // First, collect all configured file paths (whether they exist or not)
+        const excludedPaths = new Set();
+        // First, collect all configured file paths (whether they exist or not) and excluded paths
         for (const f of entry.files) {
-            const file = typeof f === 'string' ? { from: f, to: f } : f;
+            const file = typeof f === 'string' ? { from: f, to: f, exclude: [] } : { ...f, exclude: f.exclude ?? [] };
             try {
                 const filepath = node_path__WEBPACK_IMPORTED_MODULE_1__.resolve(cwd, file.from);
                 const stat = await node_fs_promises__WEBPACK_IMPORTED_MODULE_0__.stat(filepath);
@@ -59169,12 +59162,26 @@ const run = async () => {
                         onlyFiles: true,
                         cwd: node_path__WEBPACK_IMPORTED_MODULE_1__.join(cwd, file.from),
                     });
+                    // Add all files to configured paths
                     for (const p of list) {
                         allConfiguredPaths.add(node_path__WEBPACK_IMPORTED_MODULE_1__.join(file.to, p));
+                    }
+                    // Collect excluded files
+                    if (file.exclude.length > 0) {
+                        for (const p of list) {
+                            const fromPath = node_path__WEBPACK_IMPORTED_MODULE_1__.join(file.from, p);
+                            const toPath = node_path__WEBPACK_IMPORTED_MODULE_1__.join(file.to, p);
+                            // Check if this file matches any exclude pattern
+                            if (file.exclude.some((e) => micromatch__WEBPACK_IMPORTED_MODULE_5___default().isMatch(fromPath, node_path__WEBPACK_IMPORTED_MODULE_1__.join(file.from, e)))) {
+                                excludedPaths.add(toPath);
+                                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Excluded file will be deleted if exists in target: ${toPath}`);
+                            }
+                        }
                     }
                 }
                 else {
                     allConfiguredPaths.add(file.to);
+                    // For single files, exclude is ignored (but we still track it)
                 }
             }
             catch {
@@ -59320,9 +59327,17 @@ const run = async () => {
                 for (const existingFile of existingFiles.right) {
                     _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`  - Existing file: ${existingFile.path} (mode: ${existingFile.mode})`);
                 }
+                if (excludedPaths.size > 0) {
+                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Excluded paths that will be deleted if found: ${Array.from(excludedPaths).join(', ')}`);
+                }
                 // Determine files to delete
                 const currentSyncFilePaths = new Set(files.right.map((f) => f.to));
                 filesToDelete = existingFiles.right.filter((file) => {
+                    // Check if this file is explicitly excluded (should be deleted)
+                    if (excludedPaths.has(file.path)) {
+                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`File marked for deletion (excluded): ${file.path}`);
+                        return true;
+                    }
                     // Check if this existing file should be managed by this sync pattern
                     const isInSyncScope = uniquePaths.some((p) => {
                         if (p === '') {
