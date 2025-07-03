@@ -32,30 +32,43 @@ const run = async (): Promise<number> => {
   const inputs = getInputs();
   const github = createGitHub(inputs);
 
-  // Function to get PR info for a specific file
+  // Function to get PR info for a specific file in the SOURCE repository (A repo)
   const getPrInfoForFile = async (filePath: string): Promise<{ title: string; number: number } | null> => {
     try {
+      core.info(`Getting PR info for file: ${filePath} in source repo: ${GH_REPOSITORY}`);
+
+      // Initialize the SOURCE repository (A repo) - this is where the files come from
       const sourceRepo = await github.initializeRepository(GH_REPOSITORY)();
       if (T.isRight(sourceRepo)) {
-        // Get the last commit that modified this file
+        // Get the last commit that modified this file in the SOURCE repository
+        core.info(`Getting last commit for file: ${filePath} in source repo`);
         const lastCommit = await sourceRepo.right.getLastCommitForFile(filePath)();
         if (T.isRight(lastCommit) && lastCommit.right) {
-          // Find PRs that contain this commit
+          core.info(`Found last commit for ${filePath} in source repo: ${lastCommit.right.sha}`);
+          // Find PRs that contain this commit in the SOURCE repository
           const prs = await sourceRepo.right.findPullRequestsByCommit(lastCommit.right.sha)();
           if (T.isRight(prs) && prs.right.length > 0) {
+            core.info(`Found ${prs.right.length} PRs for commit ${lastCommit.right.sha} in source repo`);
             // Use the first (most recent) PR
             const pr = prs.right[0];
             if (pr) {
+              core.info(`Using PR #${pr.number}: ${pr.title} from source repo`);
               return {
                 title: pr.title,
                 number: pr.number,
               };
             }
+          } else {
+            core.info(`No PRs found for commit ${lastCommit.right.sha} in source repo`);
           }
+        } else {
+          core.info(`No last commit found for file: ${filePath} in source repo`);
         }
+      } else {
+        core.info(`Failed to initialize source repository: ${GH_REPOSITORY}`);
       }
     } catch (e) {
-      core.debug(`Could not get PR info for file ${filePath}: ${e}`);
+      core.info(`Error getting PR info for file ${filePath} in source repo: ${e}`);
     }
     return null;
   };
@@ -462,15 +475,20 @@ const run = async (): Promise<number> => {
               const isDeleted = filesToDelete.some((f) => f.path === d.filename);
 
               // Get PR info for this specific file
-              const prInfo = await getPrInfoForFile(syncFile?.from || d.filename);
+              const sourceFilePath = syncFile?.from || d.filename;
+              core.info(`Processing file: ${d.filename}, source: ${sourceFilePath}`);
+              const prInfo = await getPrInfoForFile(sourceFilePath);
 
-              return {
+              const result = {
                 from: syncFile?.from,
                 to: d.filename,
                 deleted: isDeleted,
                 pull_request_title: prInfo?.title || null,
                 pull_request_number: prInfo?.number || null,
               };
+
+              core.info(`File ${d.filename} PR info: ${prInfo ? `#${prInfo.number} ${prInfo.title}` : 'none'}`);
+              return result;
             }),
           ),
           index: i,

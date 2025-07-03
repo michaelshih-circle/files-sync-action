@@ -413,17 +413,21 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
       }, handleErrorReason),
 
       getLastCommitForFile: TE.tryCatchK(async (filePath) => {
+        console.log(`Debug - Getting last commit for file: ${filePath}`);
         const { data: commits } = await octokit.rest.repos.listCommits({
           ...defaults,
           path: filePath,
           per_page: 1,
         });
 
+        console.log(`Debug - Found ${commits.length} commits for file: ${filePath}`);
         if (commits.length === 0 || !commits[0]) {
+          console.log(`Debug - No commits found for file: ${filePath}`);
           return null;
         }
 
         const commit = commits[0];
+        console.log(`Debug - Last commit for ${filePath}: ${commit.sha} - ${commit.commit.message}`);
         return {
           message: commit.commit.message,
           sha: commit.sha,
@@ -441,16 +445,35 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
       }, handleErrorReason),
 
       findPullRequestsByCommit: TE.tryCatchK(async (sha) => {
-        const { data: prs } = await octokit.rest.pulls.list({
+        console.log(`Debug - Finding PRs for commit: ${sha}`);
+
+        // Search both open and closed PRs
+        const allPrs = [];
+
+        // Get closed PRs
+        const { data: closedPrs } = await octokit.rest.pulls.list({
           ...defaults,
           state: 'closed',
           sort: 'updated',
           direction: 'desc',
+          per_page: 100,
         });
+
+        // Get open PRs
+        const { data: openPrs } = await octokit.rest.pulls.list({
+          ...defaults,
+          state: 'open',
+          sort: 'updated',
+          direction: 'desc',
+          per_page: 100,
+        });
+
+        allPrs.push(...closedPrs, ...openPrs);
+        console.log(`Debug - Found ${allPrs.length} total PRs to check`);
 
         // Filter PRs that contain the commit
         const filteredPrs = [];
-        for (const pr of prs) {
+        for (const pr of allPrs) {
           try {
             const { data: commits } = await octokit.rest.pulls.listCommits({
               ...defaults,
@@ -458,14 +481,17 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
             });
 
             if (commits.some((commit) => commit.sha === sha)) {
+              console.log(`Debug - Found matching PR: #${pr.number} ${pr.title}`);
               filteredPrs.push(pr);
             }
           } catch (e) {
             // Skip this PR if we can't get commits
+            console.log(`Debug - Skipping PR #${pr.number} due to error: ${e}`);
             continue;
           }
         }
 
+        console.log(`Debug - Found ${filteredPrs.length} PRs containing commit ${sha}`);
         return filteredPrs;
       }, handleErrorReason),
 

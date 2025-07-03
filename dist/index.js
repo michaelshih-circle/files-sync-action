@@ -58934,15 +58934,19 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
             return files;
         }, handleErrorReason),
         getLastCommitForFile: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async (filePath) => {
+            console.log(`Debug - Getting last commit for file: ${filePath}`);
             const { data: commits } = await octokit.rest.repos.listCommits({
                 ...defaults,
                 path: filePath,
                 per_page: 1,
             });
+            console.log(`Debug - Found ${commits.length} commits for file: ${filePath}`);
             if (commits.length === 0 || !commits[0]) {
+                console.log(`Debug - No commits found for file: ${filePath}`);
                 return null;
             }
             const commit = commits[0];
+            console.log(`Debug - Last commit for ${filePath}: ${commit.sha} - ${commit.commit.message}`);
             return {
                 message: commit.commit.message,
                 sha: commit.sha,
@@ -58957,29 +58961,47 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
             return prs[0] ?? null;
         }, handleErrorReason),
         findPullRequestsByCommit: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async (sha) => {
-            const { data: prs } = await octokit.rest.pulls.list({
+            console.log(`Debug - Finding PRs for commit: ${sha}`);
+            // Search both open and closed PRs
+            const allPrs = [];
+            // Get closed PRs
+            const { data: closedPrs } = await octokit.rest.pulls.list({
                 ...defaults,
                 state: 'closed',
                 sort: 'updated',
                 direction: 'desc',
+                per_page: 100,
             });
+            // Get open PRs  
+            const { data: openPrs } = await octokit.rest.pulls.list({
+                ...defaults,
+                state: 'open',
+                sort: 'updated',
+                direction: 'desc',
+                per_page: 100,
+            });
+            allPrs.push(...closedPrs, ...openPrs);
+            console.log(`Debug - Found ${allPrs.length} total PRs to check`);
             // Filter PRs that contain the commit
             const filteredPrs = [];
-            for (const pr of prs) {
+            for (const pr of allPrs) {
                 try {
                     const { data: commits } = await octokit.rest.pulls.listCommits({
                         ...defaults,
                         pull_number: pr.number,
                     });
-                    if (commits.some(commit => commit.sha === sha)) {
+                    if (commits.some((commit) => commit.sha === sha)) {
+                        console.log(`Debug - Found matching PR: #${pr.number} ${pr.title}`);
                         filteredPrs.push(pr);
                     }
                 }
                 catch (e) {
                     // Skip this PR if we can't get commits
+                    console.log(`Debug - Skipping PR #${pr.number} due to error: ${e}`);
                     continue;
                 }
             }
+            console.log(`Debug - Found ${filteredPrs.length} PRs containing commit ${sha}`);
             return filteredPrs;
         }, handleErrorReason),
         closePullRequest: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async (number) => {
@@ -59177,31 +59199,46 @@ const run = async () => {
     const cwd = process.cwd();
     const inputs = (0,_inputs_js__WEBPACK_IMPORTED_MODULE_9__/* .getInputs */ .G)();
     const github = (0,_github_js__WEBPACK_IMPORTED_MODULE_8__/* .createGitHub */ .n)(inputs);
-    // Function to get PR info for a specific file
+    // Function to get PR info for a specific file in the SOURCE repository (A repo)
     const getPrInfoForFile = async (filePath) => {
         try {
+            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Getting PR info for file: ${filePath} in source repo: ${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf}`);
+            // Initialize the SOURCE repository (A repo) - this is where the files come from
             const sourceRepo = await github.initializeRepository(_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf)();
             if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isRight(sourceRepo)) {
-                // Get the last commit that modified this file
+                // Get the last commit that modified this file in the SOURCE repository
+                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Getting last commit for file: ${filePath} in source repo`);
                 const lastCommit = await sourceRepo.right.getLastCommitForFile(filePath)();
                 if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isRight(lastCommit) && lastCommit.right) {
-                    // Find PRs that contain this commit
+                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Found last commit for ${filePath} in source repo: ${lastCommit.right.sha}`);
+                    // Find PRs that contain this commit in the SOURCE repository
                     const prs = await sourceRepo.right.findPullRequestsByCommit(lastCommit.right.sha)();
                     if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isRight(prs) && prs.right.length > 0) {
+                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Found ${prs.right.length} PRs for commit ${lastCommit.right.sha} in source repo`);
                         // Use the first (most recent) PR
                         const pr = prs.right[0];
                         if (pr) {
+                            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Using PR #${pr.number}: ${pr.title} from source repo`);
                             return {
                                 title: pr.title,
                                 number: pr.number,
                             };
                         }
                     }
+                    else {
+                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`No PRs found for commit ${lastCommit.right.sha} in source repo`);
+                    }
                 }
+                else {
+                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`No last commit found for file: ${filePath} in source repo`);
+                }
+            }
+            else {
+                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Failed to initialize source repository: ${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf}`);
             }
         }
         catch (e) {
-            _actions_core__WEBPACK_IMPORTED_MODULE_2__.debug(`Could not get PR info for file ${filePath}: ${e}`);
+            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Error getting PR info for file ${filePath} in source repo: ${e}`);
         }
         return null;
     };
@@ -59540,14 +59577,18 @@ const run = async () => {
                         const syncFile = files.right.find((f) => f.to === d.filename);
                         const isDeleted = filesToDelete.some((f) => f.path === d.filename);
                         // Get PR info for this specific file
-                        const prInfo = await getPrInfoForFile(syncFile?.from || d.filename);
-                        return {
+                        const sourceFilePath = syncFile?.from || d.filename;
+                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Processing file: ${d.filename}, source: ${sourceFilePath}`);
+                        const prInfo = await getPrInfoForFile(sourceFilePath);
+                        const result = {
                             from: syncFile?.from,
                             to: d.filename,
                             deleted: isDeleted,
                             pull_request_title: prInfo?.title || null,
                             pull_request_number: prInfo?.number || null,
                         };
+                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`File ${d.filename} PR info: ${prInfo ? `#${prInfo.number} ${prInfo.title}` : 'none'}`);
+                        return result;
                     })),
                     index: i,
                     pull_request_titles: [],
