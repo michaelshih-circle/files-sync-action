@@ -352,9 +352,12 @@ const run = async (): Promise<number> => {
       info('Commit SHA', commit.right.sha);
       info('Commit', `"${commit.right.message}"`);
 
-      const diff = await repo.x(existingPr.right !== null ? existingPr.right.base.sha : parent, commit.right.sha)();
+      const diff = await repo.compareCommits(
+        existingPr.right !== null ? existingPr.right.base.sha : parent,
+        commit.right.sha,
+      )();
       if (T.isLeft(diff)) {
-        core.setFailed(`${id} - Compare commits error: ${diff.left.message}`);
+        core.setFailed(`${id} - Compare commits error: ${String(diff.left)}`);
         return 1;
       }
       core.debug(`diff: ${json(diff.right)}`);
@@ -398,7 +401,7 @@ const run = async (): Promise<number> => {
             number: GH_RUN_NUMBER,
             url: `${GH_SERVER}/${GH_REPOSITORY}/actions/runs/${GH_RUN_ID}`,
           },
-          changes: diff.right.map((d) => {
+          changes: diff.right.map((d: any) => {
             const syncFile = files.right.find((f) => f.to === d.filename);
             const isDeleted = filesToDelete.some((f) => f.path === d.filename);
 

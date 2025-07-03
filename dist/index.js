@@ -58848,12 +58848,12 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
             const treeEntries = files.map((file) => {
                 if (file.sha === null) {
                     // Delete file - According to GitHub API docs, deletions need mode and type
-                    console.log(`Debug - Delete entry: path="${file.path}", mode="${file.mode}", type="blob"`);
+                    console.log(`Debug - Delete entry: path="${file.path}", mode="${file.mode}", type="blob", sha=null`);
                     return {
                         path: file.path,
                         mode: file.mode,
                         type: 'blob',
-                        sha: null,
+                        sha: null, // This is essential for deletions
                     };
                 }
                 else {
@@ -58870,6 +58870,14 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
             console.log(`Debug - About to create tree with ${treeEntries.length} entries`);
             console.log(`Debug - Base tree SHA: ${parent}`);
             console.log(`Debug - Full tree entries:`, JSON.stringify(treeEntries, null, 2));
+            // get current tree to compare
+            const { data: currentTree } = await octokit.rest.git.getTree({
+                ...defaults,
+                tree_sha: parent,
+                recursive: 'true',
+            });
+            console.log(`Debug - Current tree from parent (${parent}):`, JSON.stringify(currentTree.tree.slice(0, 5), null, 2));
+            console.log(`Debug - Current tree has ${currentTree.tree.length} total entries`);
             // Create tree
             const { data: tree } = await octokit.rest.git.createTree({
                 ...defaults,
@@ -59394,7 +59402,7 @@ const run = async () => {
             info('Commit', `"${commit.right.message}"`);
             const diff = await repo.compareCommits(existingPr.right !== null ? existingPr.right.base.sha : parent, commit.right.sha)();
             if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isLeft(diff)) {
-                _actions_core__WEBPACK_IMPORTED_MODULE_2__.setFailed(`${id} - Compare commits error: ${diff.left.message}`);
+                _actions_core__WEBPACK_IMPORTED_MODULE_2__.setFailed(`${id} - Compare commits error: ${String(diff.left)}`);
                 return 1;
             }
             _actions_core__WEBPACK_IMPORTED_MODULE_2__.debug(`diff: ${json(diff.right)}`);

@@ -321,12 +321,12 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
         const treeEntries = files.map((file) => {
           if (file.sha === null) {
             // Delete file - According to GitHub API docs, deletions need mode and type
-            console.log(`Debug - Delete entry: path="${file.path}", mode="${file.mode}", type="blob"`);
+            console.log(`Debug - Delete entry: path="${file.path}", mode="${file.mode}", type="blob", sha=null`);
             return {
               path: file.path,
               mode: file.mode!,
               type: 'blob' as const,
-              sha: null,
+              sha: null, // This is essential for deletions
             };
           } else {
             // Add/modify file
@@ -343,6 +343,18 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
         console.log(`Debug - About to create tree with ${treeEntries.length} entries`);
         console.log(`Debug - Base tree SHA: ${parent}`);
         console.log(`Debug - Full tree entries:`, JSON.stringify(treeEntries, null, 2));
+
+        // get current tree to compare
+        const { data: currentTree } = await octokit.rest.git.getTree({
+          ...defaults,
+          tree_sha: parent,
+          recursive: 'true',
+        });
+        console.log(
+          `Debug - Current tree from parent (${parent}):`,
+          JSON.stringify(currentTree.tree.slice(0, 5), null, 2),
+        );
+        console.log(`Debug - Current tree has ${currentTree.tree.length} total entries`);
 
         // Create tree
         const { data: tree } = await octokit.rest.git.createTree({
