@@ -31,6 +31,21 @@ const run = async (): Promise<number> => {
 
   const inputs = getInputs();
 
+  // Get current repository's PR titles if triggered by pull_request event
+  const currentPrTitles: string[] = [];
+  const eventPath = process.env['GITHUB_EVENT_PATH'];
+  if (eventPath) {
+    try {
+      const event = JSON.parse(await fs.readFile(eventPath, 'utf8'));
+      if (event.pull_request && event.pull_request.title) {
+        currentPrTitles.push(event.pull_request.title);
+      }
+    } catch (e) {
+      // If we can't read the event or it's not a PR event, continue without PR titles
+      core.debug(`Could not read GitHub event: ${e}`);
+    }
+  }
+
   const config = await loadConfig(inputs.config_file)();
   if (T.isLeft(config)) {
     core.setFailed(`Load config error: ${inputs.config_file}#${config.left.message}`);
@@ -439,6 +454,7 @@ const run = async (): Promise<number> => {
             };
           }),
           index: i,
+          pull_request_titles: currentPrTitles,
         }),
         branch,
       })();

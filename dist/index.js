@@ -59125,6 +59125,21 @@ const info = (key, value) => _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`${
 const run = async () => {
     const cwd = process.cwd();
     const inputs = (0,_inputs_js__WEBPACK_IMPORTED_MODULE_9__/* .getInputs */ .G)();
+    // Get current repository's PR titles if triggered by pull_request event
+    const currentPrTitles = [];
+    const eventPath = process.env['GITHUB_EVENT_PATH'];
+    if (eventPath) {
+        try {
+            const event = JSON.parse(await node_fs_promises__WEBPACK_IMPORTED_MODULE_0__.readFile(eventPath, 'utf8'));
+            if (event.pull_request && event.pull_request.title) {
+                currentPrTitles.push(event.pull_request.title);
+            }
+        }
+        catch (e) {
+            // If we can't read the event or it's not a PR event, continue without PR titles
+            _actions_core__WEBPACK_IMPORTED_MODULE_2__.debug(`Could not read GitHub event: ${e}`);
+        }
+    }
     const config = await (0,_config_js__WEBPACK_IMPORTED_MODULE_6__/* .loadConfig */ .ME)(inputs.config_file)();
     if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isLeft(config)) {
         _actions_core__WEBPACK_IMPORTED_MODULE_2__.setFailed(`Load config error: ${inputs.config_file}#${config.left.message}`);
@@ -59467,6 +59482,7 @@ const run = async () => {
                         };
                     }),
                     index: i,
+                    pull_request_titles: currentPrTitles,
                 }),
                 branch,
             })();
