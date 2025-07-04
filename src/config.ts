@@ -75,6 +75,7 @@ export type TemplateConfig = z.infer<typeof templateConfigSchema>;
 export const patternConfigSchema = z.object({
   files: z.array(z.union([z.string(), fileConfigSchema])),
   repositories: z.array(z.string()),
+  delete_files: z.array(z.string()).optional(),
   commit: commitConfigSchema.optional(),
   branch: branchConfigSchema.optional(),
   pull_request: pullRequestConfigSchema.optional(),

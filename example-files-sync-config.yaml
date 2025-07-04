@@ -1,0 +1,23 @@
+patterns:
+  - files:
+      - README.md
+      - package.json
+      - .github/workflows/ci.yml
+      - from: config/
+        to: .config/
+        exclude:
+          - '*.local.*'
+          - '*.secret.*'
+    delete_files:
+      # Delete single files
+      - old-config.json
+      - deprecated-file.txt
+      - .github/workflows/old-workflow.yml
+      # Delete entire directories
+      - old-configs/
+      - temp/
+    repositories:
+      - owner/repo-b
+      - owner/repo-c
+    pull_request:
+      title: 'sync: Update files from `<%- repository %>`'

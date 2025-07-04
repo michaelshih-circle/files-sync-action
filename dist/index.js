@@ -58529,6 +58529,7 @@ const templateConfigSchema = recordType(stringType(), anyType());
 const patternConfigSchema = objectType({
     files: arrayType(unionType([stringType(), fileConfigSchema])),
     repositories: arrayType(stringType()),
+    delete_files: arrayType(stringType()).optional(),
     commit: commitConfigSchema.optional(),
     branch: branchConfigSchema.optional(),
     pull_request: pullRequestConfigSchema.optional(),
@@ -59387,6 +59388,54 @@ const run = async () => {
                     sha: null, // null means delete
                 })),
             ];
+            // Add files from delete_files configuration
+            if (entry.delete_files && entry.delete_files.length > 0) {
+                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Processing ${entry.delete_files.length} delete_files entries`);
+                // Get all existing files from target repository once
+                const allExistingFiles = await repo.getTreeFiles(parent)();
+                if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isLeft(allExistingFiles)) {
+                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.setFailed(`${id} - Failed to get existing files for delete_files: ${allExistingFiles.left.message}`);
+                    return 1;
+                }
+                for (const deletePattern of entry.delete_files) {
+                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Processing delete pattern: ${deletePattern}`);
+                    // Find matching files in the target repository
+                    const matchingFiles = allExistingFiles.right.filter(file => {
+                        // Exact match for files
+                        if (file.path === deletePattern) {
+                            return true;
+                        }
+                        // Directory match - check if file is under the specified directory
+                        if (deletePattern.endsWith('/')) {
+                            return file.path.startsWith(deletePattern);
+                        }
+                        else {
+                            // Check if it's a directory path without trailing slash
+                            return file.path.startsWith(deletePattern + '/');
+                        }
+                    });
+                    if (matchingFiles.length === 0) {
+                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`No files found matching delete pattern: ${deletePattern}`);
+                        continue;
+                    }
+                    for (const fileToDelete of matchingFiles) {
+                        // Check if file is already in delete list
+                        const alreadyInDeleteList = commitFiles.some(f => 'sha' in f && f.path === fileToDelete.path && f.sha === null);
+                        if (!alreadyInDeleteList) {
+                            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Adding file to delete from delete_files: ${fileToDelete.path}`);
+                            commitFiles.push({
+                                path: fileToDelete.path,
+                                mode: fileToDelete.mode,
+                                sha: null, // null means delete
+                            });
+                        }
+                        else {
+                            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`File already in delete list: ${fileToDelete.path}`);
+                        }
+                    }
+                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Added ${matchingFiles.length} files for deletion from pattern: ${deletePattern}`);
+                }
+            }
             // Skip commit if no files to sync and no files to delete
             if (commitFiles.length === 0) {
                 info('Status', 'No files to sync, skipping commit');
