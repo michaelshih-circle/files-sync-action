@@ -104,9 +104,8 @@ export type GitHubRepository = {
   commit: (params: GitHubRepositoryCommitParams) => TE.TaskEither<Error, Commit>;
   compareCommits: (base: string, head: string) => TE.TaskEither<Error, CommitDiffEntry[]>;
   getTreeFiles: (sha: string, paths?: string[]) => TE.TaskEither<Error, TreeEntry[]>;
-  getLastCommitForFile: (filePath: string) => TE.TaskEither<Error, Commit | null>;
+  getFileContent: (path: string) => TE.TaskEither<Error, string | null>;
   findExistingPullRequestByBranch: (branch: string) => TE.TaskEither<Error, PullRequest | null>;
-  findPullRequestsByCommit: (sha: string) => TE.TaskEither<Error, PullRequest[]>;
   closePullRequest: (number: number) => TE.TaskEither<Error, void>;
   createOrUpdatePullRequest: (
     params: GitHubRepositoryCreateOrUpdatePullRequestParams,
@@ -412,26 +411,25 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
         return files;
       }, handleErrorReason),
 
-      getLastCommitForFile: TE.tryCatchK(async (filePath) => {
-        console.log(`Debug - Getting last commit for file: ${filePath}`);
-        const { data: commits } = await octokit.rest.repos.listCommits({
-          ...defaults,
-          path: filePath,
-          per_page: 1,
-        });
-
-        console.log(`Debug - Found ${commits.length} commits for file: ${filePath}`);
-        if (commits.length === 0 || !commits[0]) {
-          console.log(`Debug - No commits found for file: ${filePath}`);
+      getFileContent: TE.tryCatchK(async (path) => {
+        try {
+          const { data } = await octokit.rest.repos.getContent({
+            ...defaults,
+            path,
+          });
+          if (Array.isArray(data)) {
+            throw new Error('Expected a single file content');
+          }
+          if (data.type === 'file' && 'content' in data) {
+            return Buffer.from(data.content, 'base64').toString();
+          }
           return null;
+        } catch (error: any) {
+          if (error.status === 404) {
+            return null;
+          }
+          throw error;
         }
-
-        const commit = commits[0];
-        console.log(`Debug - Last commit for ${filePath}: ${commit.sha} - ${commit.commit.message}`);
-        return {
-          message: commit.commit.message,
-          sha: commit.sha,
-        };
       }, handleErrorReason),
 
       findExistingPullRequestByBranch: TE.tryCatchK(async (branch) => {
@@ -442,57 +440,6 @@ const createGitHubRepository = TE.tryCatchK<Error, [CreateGitHubRepositoryParams
         });
 
         return prs[0] ?? null;
-      }, handleErrorReason),
-
-      findPullRequestsByCommit: TE.tryCatchK(async (sha) => {
-        console.log(`Debug - Finding PRs for commit: ${sha}`);
-
-        // Search both open and closed PRs
-        const allPrs = [];
-
-        // Get closed PRs
-        const { data: closedPrs } = await octokit.rest.pulls.list({
-          ...defaults,
-          state: 'closed',
-          sort: 'updated',
-          direction: 'desc',
-          per_page: 100,
-        });
-
-        // Get open PRs
-        const { data: openPrs } = await octokit.rest.pulls.list({
-          ...defaults,
-          state: 'open',
-          sort: 'updated',
-          direction: 'desc',
-          per_page: 100,
-        });
-
-        allPrs.push(...closedPrs, ...openPrs);
-        console.log(`Debug - Found ${allPrs.length} total PRs to check`);
-
-        // Filter PRs that contain the commit
-        const filteredPrs = [];
-        for (const pr of allPrs) {
-          try {
-            const { data: commits } = await octokit.rest.pulls.listCommits({
-              ...defaults,
-              pull_number: pr.number,
-            });
-
-            if (commits.some((commit) => commit.sha === sha)) {
-              console.log(`Debug - Found matching PR: #${pr.number} ${pr.title}`);
-              filteredPrs.push(pr);
-            }
-          } catch (e) {
-            // Skip this PR if we can't get commits
-            console.log(`Debug - Skipping PR #${pr.number} due to error: ${e}`);
-            continue;
-          }
-        }
-
-        console.log(`Debug - Found ${filteredPrs.length} PRs containing commit ${sha}`);
-        return filteredPrs;
       }, handleErrorReason),
 
       closePullRequest: TE.tryCatchK(async (number) => {

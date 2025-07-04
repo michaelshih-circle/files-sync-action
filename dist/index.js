@@ -58650,16 +58650,6 @@ This PR contains the following updates:
 - \`<%- file.from %>\` to \`<%- file.to %>\`
 <% } -%>
 <%_ } -%>
-
-<% if (pull_request_titles && pull_request_titles.length > 0) { -%>
----
-
-### Related Pull Requests
-
-<%_ for (const prTitle of pull_request_titles) { -%>
-- <%- prTitle %>
-<%_ } -%>
-<% } -%>
     `.trim(),
         reviewers: [],
         assignees: [],
@@ -58933,24 +58923,26 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
             }
             return files;
         }, handleErrorReason),
-        getLastCommitForFile: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async (filePath) => {
-            console.log(`Debug - Getting last commit for file: ${filePath}`);
-            const { data: commits } = await octokit.rest.repos.listCommits({
-                ...defaults,
-                path: filePath,
-                per_page: 1,
-            });
-            console.log(`Debug - Found ${commits.length} commits for file: ${filePath}`);
-            if (commits.length === 0 || !commits[0]) {
-                console.log(`Debug - No commits found for file: ${filePath}`);
+        getFileContent: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async (path) => {
+            try {
+                const { data } = await octokit.rest.repos.getContent({
+                    ...defaults,
+                    path,
+                });
+                if (Array.isArray(data)) {
+                    throw new Error('Expected a single file content');
+                }
+                if (data.type === 'file' && 'content' in data) {
+                    return Buffer.from(data.content, 'base64').toString();
+                }
                 return null;
             }
-            const commit = commits[0];
-            console.log(`Debug - Last commit for ${filePath}: ${commit.sha} - ${commit.commit.message}`);
-            return {
-                message: commit.commit.message,
-                sha: commit.sha,
-            };
+            catch (error) {
+                if (error.status === 404) {
+                    return null;
+                }
+                throw error;
+            }
         }, handleErrorReason),
         findExistingPullRequestByBranch: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async (branch) => {
             const { data: prs } = await octokit.rest.pulls.list({
@@ -58959,50 +58951,6 @@ const createGitHubRepository = fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.try
                 head: `${defaults.owner}:${branch}`,
             });
             return prs[0] ?? null;
-        }, handleErrorReason),
-        findPullRequestsByCommit: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async (sha) => {
-            console.log(`Debug - Finding PRs for commit: ${sha}`);
-            // Search both open and closed PRs
-            const allPrs = [];
-            // Get closed PRs
-            const { data: closedPrs } = await octokit.rest.pulls.list({
-                ...defaults,
-                state: 'closed',
-                sort: 'updated',
-                direction: 'desc',
-                per_page: 100,
-            });
-            // Get open PRs
-            const { data: openPrs } = await octokit.rest.pulls.list({
-                ...defaults,
-                state: 'open',
-                sort: 'updated',
-                direction: 'desc',
-                per_page: 100,
-            });
-            allPrs.push(...closedPrs, ...openPrs);
-            console.log(`Debug - Found ${allPrs.length} total PRs to check`);
-            // Filter PRs that contain the commit
-            const filteredPrs = [];
-            for (const pr of allPrs) {
-                try {
-                    const { data: commits } = await octokit.rest.pulls.listCommits({
-                        ...defaults,
-                        pull_number: pr.number,
-                    });
-                    if (commits.some((commit) => commit.sha === sha)) {
-                        console.log(`Debug - Found matching PR: #${pr.number} ${pr.title}`);
-                        filteredPrs.push(pr);
-                    }
-                }
-                catch (e) {
-                    // Skip this PR if we can't get commits
-                    console.log(`Debug - Skipping PR #${pr.number} due to error: ${e}`);
-                    continue;
-                }
-            }
-            console.log(`Debug - Found ${filteredPrs.length} PRs containing commit ${sha}`);
-            return filteredPrs;
         }, handleErrorReason),
         closePullRequest: fp_ts_TaskEither__WEBPACK_IMPORTED_MODULE_2__.tryCatchK(async (number) => {
             await octokit.rest.pulls.update({
@@ -59199,49 +59147,6 @@ const run = async () => {
     const cwd = process.cwd();
     const inputs = (0,_inputs_js__WEBPACK_IMPORTED_MODULE_9__/* .getInputs */ .G)();
     const github = (0,_github_js__WEBPACK_IMPORTED_MODULE_8__/* .createGitHub */ .n)(inputs);
-    // Function to get PR info for a specific file in the SOURCE repository (A repo)
-    const getPrInfoForFile = async (filePath) => {
-        try {
-            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Getting PR info for file: ${filePath} in source repo: ${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf}`);
-            // Initialize the SOURCE repository (A repo) - this is where the files come from
-            const sourceRepo = await github.initializeRepository(_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf)();
-            if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isRight(sourceRepo)) {
-                // Get the last commit that modified this file in the SOURCE repository
-                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Getting last commit for file: ${filePath} in source repo`);
-                const lastCommit = await sourceRepo.right.getLastCommitForFile(filePath)();
-                if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isRight(lastCommit) && lastCommit.right) {
-                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Found last commit for ${filePath} in source repo: ${lastCommit.right.sha}`);
-                    // Find PRs that contain this commit in the SOURCE repository
-                    const prs = await sourceRepo.right.findPullRequestsByCommit(lastCommit.right.sha)();
-                    if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isRight(prs) && prs.right.length > 0) {
-                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Found ${prs.right.length} PRs for commit ${lastCommit.right.sha} in source repo`);
-                        // Use the first (most recent) PR
-                        const pr = prs.right[0];
-                        if (pr) {
-                            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Using PR #${pr.number}: ${pr.title} from source repo`);
-                            return {
-                                title: pr.title,
-                                number: pr.number,
-                            };
-                        }
-                    }
-                    else {
-                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`No PRs found for commit ${lastCommit.right.sha} in source repo`);
-                    }
-                }
-                else {
-                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`No last commit found for file: ${filePath} in source repo`);
-                }
-            }
-            else {
-                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Failed to initialize source repository: ${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf}`);
-            }
-        }
-        catch (e) {
-            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Error getting PR info for file ${filePath} in source repo: ${e}`);
-        }
-        return null;
-    };
     const config = await (0,_config_js__WEBPACK_IMPORTED_MODULE_6__/* .loadConfig */ .ME)(inputs.config_file)();
     if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isLeft(config)) {
         _actions_core__WEBPACK_IMPORTED_MODULE_2__.setFailed(`Load config error: ${inputs.config_file}#${config.left.message}`);
@@ -59282,7 +59187,7 @@ const run = async () => {
                     for (const p of list) {
                         allConfiguredPaths.add(node_path__WEBPACK_IMPORTED_MODULE_1__.join(file.to, p));
                     }
-                    // Collect excluded files
+                    // Collect excluded files - these should be completely ignored
                     if (file.exclude.length > 0) {
                         for (const p of list) {
                             const fromPath = node_path__WEBPACK_IMPORTED_MODULE_1__.join(file.from, p);
@@ -59290,7 +59195,7 @@ const run = async () => {
                             // Check if this file matches any exclude pattern
                             if (file.exclude.some((e) => micromatch__WEBPACK_IMPORTED_MODULE_5___default().isMatch(fromPath, node_path__WEBPACK_IMPORTED_MODULE_1__.join(file.from, e)))) {
                                 excludedPaths.add(toPath);
-                                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Excluded file will be deleted if exists in target: ${toPath}`);
+                                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Excluded file will be ignored (not synced, not deleted): ${toPath}`);
                             }
                         }
                     }
@@ -59444,15 +59349,15 @@ const run = async () => {
                     _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`  - Existing file: ${existingFile.path} (mode: ${existingFile.mode})`);
                 }
                 if (excludedPaths.size > 0) {
-                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Excluded paths that will be deleted if found: ${Array.from(excludedPaths).join(', ')}`);
+                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Excluded files will be ignored (not synced, not deleted): ${Array.from(excludedPaths).join(', ')}`);
                 }
                 // Determine files to delete
                 const currentSyncFilePaths = new Set(files.right.map((f) => f.to));
                 filesToDelete = existingFiles.right.filter((file) => {
-                    // Check if this file is explicitly excluded (should be deleted)
+                    // Skip excluded files - they should be completely ignored
                     if (excludedPaths.has(file.path)) {
-                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`File marked for deletion (excluded): ${file.path}`);
-                        return true;
+                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Excluded file ignored (will not be deleted): ${file.path}`);
+                        return false;
                     }
                     // Check if this existing file should be managed by this sync pattern
                     const isInSyncScope = uniquePaths.some((p) => {
@@ -59566,52 +59471,78 @@ const run = async () => {
                 }),
                 body: await (async () => {
                     try {
-                        const templateData = await (async () => {
-                            // Collect all unique PR info
-                            const allPrInfo = new Set();
-                            const fileChanges = await Promise.all(diff.right.map(async (d) => {
+                        // Check if custom body template is configured
+                        const hasCustomBody = entry.pull_request?.body || settings?.pull_request?.body;
+                        if (hasCustomBody) {
+                            // Use custom body template
+                            const fileChanges = diff.right.map((d) => {
                                 const syncFile = files.right.find((f) => f.to === d.filename);
                                 const isDeleted = filesToDelete.some((f) => f.path === d.filename);
-                                // Get PR info for this specific file
-                                const sourceFilePath = syncFile?.from || d.filename;
-                                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Processing file: ${d.filename}, source: ${sourceFilePath}`);
-                                const prInfo = await getPrInfoForFile(sourceFilePath);
-                                // Add PR info to the set if found
-                                if (prInfo) {
-                                    allPrInfo.add(`#${prInfo.number} ${prInfo.title}`);
-                                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`File ${d.filename} PR info: #${prInfo.number} ${prInfo.title}`);
-                                }
-                                else {
-                                    _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`File ${d.filename} PR info: none`);
-                                }
                                 return {
                                     from: syncFile?.from,
                                     to: d.filename,
                                     deleted: isDeleted,
                                 };
-                            }));
-                            const prTitles = Array.from(allPrInfo) || [];
-                            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Template variables: changes=${fileChanges.length}, pull_request_titles=${prTitles.length}`);
-                            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`PR titles: ${JSON.stringify(prTitles)}`);
-                            return {
+                            });
+                            const templateVars = {
+                                github: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_SERVER */ .WL,
+                                repository: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf,
+                                workflow: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_WORKFLOW */ .g$,
+                                run: {
+                                    id: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_ID */ .oR,
+                                    number: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_NUMBER */ .$H,
+                                    url: `${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_SERVER */ .WL}/${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf}/actions/runs/${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_ID */ .oR}`,
+                                },
                                 changes: fileChanges,
-                                pull_request_titles: prTitles,
+                                index: i,
                             };
-                        })();
-                        const templateVars = {
-                            github: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_SERVER */ .WL,
-                            repository: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf,
-                            workflow: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_WORKFLOW */ .g$,
-                            run: {
-                                id: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_ID */ .oR,
-                                number: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_NUMBER */ .$H,
-                                url: `${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_SERVER */ .WL}/${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf}/actions/runs/${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_ID */ .oR}`,
-                            },
-                            ...templateData,
-                            index: i,
-                        };
-                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`About to render template with variables: ${Object.keys(templateVars).join(', ')}`);
-                        return (0,ejs__WEBPACK_IMPORTED_MODULE_3__.render)([cfg.pull_request.body, _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .PR_FOOTER */ .jR].join('\n'), templateVars);
+                            return (0,ejs__WEBPACK_IMPORTED_MODULE_3__.render)([cfg.pull_request.body, _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .PR_FOOTER */ .jR].join('\n'), templateVars);
+                        }
+                        else {
+                            // Try to get CHANGELOG.md from source repository
+                            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info('No custom body template configured, trying to get CHANGELOG.md from source repository');
+                            try {
+                                const sourceRepo = await github.initializeRepository(_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf)();
+                                if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isRight(sourceRepo)) {
+                                    const changelogContent = await sourceRepo.right.getFileContent('CHANGELOG.md')();
+                                    if (fp_ts_Either__WEBPACK_IMPORTED_MODULE_11__.isRight(changelogContent) && changelogContent.right) {
+                                        _actions_core__WEBPACK_IMPORTED_MODULE_2__.info('Found CHANGELOG.md in source repository, parsing latest entry');
+                                        const latestEntry = (0,_utils_js__WEBPACK_IMPORTED_MODULE_10__/* .parseLatestChangelog */ .EF)(changelogContent.right);
+                                        if (latestEntry) {
+                                            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info('Using latest CHANGELOG.md entry as PR body');
+                                            return [latestEntry, _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .PR_FOOTER */ .jR].join('\n');
+                                        }
+                                    }
+                                }
+                            }
+                            catch (error) {
+                                _actions_core__WEBPACK_IMPORTED_MODULE_2__.info(`Failed to get CHANGELOG.md: ${error}`);
+                            }
+                            // Fallback to default template
+                            _actions_core__WEBPACK_IMPORTED_MODULE_2__.info('Using default PR body template');
+                            const fileChanges = diff.right.map((d) => {
+                                const syncFile = files.right.find((f) => f.to === d.filename);
+                                const isDeleted = filesToDelete.some((f) => f.path === d.filename);
+                                return {
+                                    from: syncFile?.from,
+                                    to: d.filename,
+                                    deleted: isDeleted,
+                                };
+                            });
+                            const templateVars = {
+                                github: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_SERVER */ .WL,
+                                repository: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf,
+                                workflow: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_WORKFLOW */ .g$,
+                                run: {
+                                    id: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_ID */ .oR,
+                                    number: _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_NUMBER */ .$H,
+                                    url: `${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_SERVER */ .WL}/${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_REPOSITORY */ .Xf}/actions/runs/${_constants_js__WEBPACK_IMPORTED_MODULE_7__/* .GH_RUN_ID */ .oR}`,
+                                },
+                                changes: fileChanges,
+                                index: i,
+                            };
+                            return (0,ejs__WEBPACK_IMPORTED_MODULE_3__.render)([cfg.pull_request.body, _constants_js__WEBPACK_IMPORTED_MODULE_7__/* .PR_FOOTER */ .jR].join('\n'), templateVars);
+                        }
                     }
                     catch (error) {
                         _actions_core__WEBPACK_IMPORTED_MODULE_2__.setFailed(`Template rendering error: ${error}`);
@@ -59742,6 +59673,7 @@ __webpack_async_result__();
 __nccwpck_require__.d(__webpack_exports__, {
   "XH": () => (/* binding */ convertValidBranchName),
   "TS": () => (/* binding */ merge),
+  "EF": () => (/* binding */ parseLatestChangelog),
   "iE": () => (/* binding */ splitCommitMessage)
 });
 
@@ -60396,6 +60328,43 @@ const splitCommitMessage = (message) => {
     const headline = hasBody ? message.slice(0, dividerIdx) : message;
     const body = hasBody ? message.slice(dividerIdx + 1) : null;
     return { headline, body };
+};
+const parseLatestChangelog = (changelogContent) => {
+    const lines = changelogContent.split('\n');
+    const latestEntry = [];
+    let foundFirstEntry = false;
+    let inCurrentEntry = false;
+    for (const line of lines) {
+        // Skip initial heading and empty lines
+        if (!foundFirstEntry && (line.trim() === '' || line.startsWith('# '))) {
+            continue;
+        }
+        // Check if this is a version heading (## [version] or ## version)
+        if (line.match(/^##\s+/)) {
+            if (!foundFirstEntry) {
+                // This is the first entry, start collecting
+                foundFirstEntry = true;
+                inCurrentEntry = true;
+                latestEntry.push(line);
+            }
+            else {
+                // This is the second entry, stop collecting
+                break;
+            }
+        }
+        else if (inCurrentEntry) {
+            // We're in the first entry, collect this line
+            latestEntry.push(line);
+        }
+    }
+    if (latestEntry.length === 0) {
+        return null;
+    }
+    // Clean up the entry (remove trailing empty lines)
+    while (latestEntry.length > 0 && latestEntry[latestEntry.length - 1]?.trim() === '') {
+        latestEntry.pop();
+    }
+    return latestEntry.join('\n');
 };
 
 

@@ -21,7 +21,7 @@ import {
 } from './constants.js';
 import { createGitHub, MergeResult } from './github.js';
 import { getInputs } from './inputs.js';
-import { convertValidBranchName, merge, splitCommitMessage } from './utils.js';
+import { convertValidBranchName, merge, splitCommitMessage, parseLatestChangelog } from './utils.js';
 
 const json = (input: unknown) => JSON.stringify(input, null, '  ');
 const info = (key: string, value: string) => core.info(`${key.padStart(21)}: ${value}`);
@@ -31,47 +31,6 @@ const run = async (): Promise<number> => {
 
   const inputs = getInputs();
   const github = createGitHub(inputs);
-
-  // Function to get PR info for a specific file in the SOURCE repository (A repo)
-  const getPrInfoForFile = async (filePath: string): Promise<{ title: string; number: number } | null> => {
-    try {
-      core.info(`Getting PR info for file: ${filePath} in source repo: ${GH_REPOSITORY}`);
-
-      // Initialize the SOURCE repository (A repo) - this is where the files come from
-      const sourceRepo = await github.initializeRepository(GH_REPOSITORY)();
-      if (T.isRight(sourceRepo)) {
-        // Get the last commit that modified this file in the SOURCE repository
-        core.info(`Getting last commit for file: ${filePath} in source repo`);
-        const lastCommit = await sourceRepo.right.getLastCommitForFile(filePath)();
-        if (T.isRight(lastCommit) && lastCommit.right) {
-          core.info(`Found last commit for ${filePath} in source repo: ${lastCommit.right.sha}`);
-          // Find PRs that contain this commit in the SOURCE repository
-          const prs = await sourceRepo.right.findPullRequestsByCommit(lastCommit.right.sha)();
-          if (T.isRight(prs) && prs.right.length > 0) {
-            core.info(`Found ${prs.right.length} PRs for commit ${lastCommit.right.sha} in source repo`);
-            // Use the first (most recent) PR
-            const pr = prs.right[0];
-            if (pr) {
-              core.info(`Using PR #${pr.number}: ${pr.title} from source repo`);
-              return {
-                title: pr.title,
-                number: pr.number,
-              };
-            }
-          } else {
-            core.info(`No PRs found for commit ${lastCommit.right.sha} in source repo`);
-          }
-        } else {
-          core.info(`No last commit found for file: ${filePath} in source repo`);
-        }
-      } else {
-        core.info(`Failed to initialize source repository: ${GH_REPOSITORY}`);
-      }
-    } catch (e) {
-      core.info(`Error getting PR info for file ${filePath} in source repo: ${e}`);
-    }
-    return null;
-  };
 
   const config = await loadConfig(inputs.config_file)();
   if (T.isLeft(config)) {
@@ -129,7 +88,7 @@ const run = async (): Promise<number> => {
             allConfiguredPaths.add(path.join(file.to, p));
           }
 
-          // Collect excluded files
+          // Collect excluded files - these should be completely ignored
           if (file.exclude.length > 0) {
             for (const p of list) {
               const fromPath = path.join(file.from, p);
@@ -137,7 +96,7 @@ const run = async (): Promise<number> => {
               // Check if this file matches any exclude pattern
               if (file.exclude.some((e) => mm.isMatch(fromPath, path.join(file.from, e)))) {
                 excludedPaths.add(toPath);
-                core.info(`Excluded file will be deleted if exists in target: ${toPath}`);
+                core.info(`Excluded file will be ignored (not synced, not deleted): ${toPath}`);
               }
             }
           }
@@ -324,16 +283,18 @@ const run = async (): Promise<number> => {
         }
 
         if (excludedPaths.size > 0) {
-          core.info(`Excluded paths that will be deleted if found: ${Array.from(excludedPaths).join(', ')}`);
+          core.info(
+            `Excluded files will be ignored (not synced, not deleted): ${Array.from(excludedPaths).join(', ')}`,
+          );
         }
 
         // Determine files to delete
         const currentSyncFilePaths = new Set(files.right.map((f) => f.to));
         filesToDelete = existingFiles.right.filter((file) => {
-          // Check if this file is explicitly excluded (should be deleted)
+          // Skip excluded files - they should be completely ignored
           if (excludedPaths.has(file.path)) {
-            core.info(`File marked for deletion (excluded): ${file.path}`);
-            return true;
+            core.info(`Excluded file ignored (will not be deleted): ${file.path}`);
+            return false;
           }
 
           // Check if this existing file should be managed by this sync pattern
@@ -462,61 +423,85 @@ const run = async (): Promise<number> => {
         }),
         body: await (async () => {
           try {
-            const templateData = await (async () => {
-              // Collect all unique PR info
-              const allPrInfo = new Set<string>();
+            // Check if custom body template is configured
+            const hasCustomBody = entry.pull_request?.body || settings?.pull_request?.body;
 
-              const fileChanges = await Promise.all(
-                diff.right.map(async (d: any) => {
-                  const syncFile = files.right.find((f) => f.to === d.filename);
-                  const isDeleted = filesToDelete.some((f) => f.path === d.filename);
+            if (hasCustomBody) {
+              // Use custom body template
+              const fileChanges = diff.right.map((d: any) => {
+                const syncFile = files.right.find((f) => f.to === d.filename);
+                const isDeleted = filesToDelete.some((f) => f.path === d.filename);
 
-                  // Get PR info for this specific file
-                  const sourceFilePath = syncFile?.from || d.filename;
-                  core.info(`Processing file: ${d.filename}, source: ${sourceFilePath}`);
-                  const prInfo = await getPrInfoForFile(sourceFilePath);
+                return {
+                  from: syncFile?.from,
+                  to: d.filename,
+                  deleted: isDeleted,
+                };
+              });
 
-                  // Add PR info to the set if found
-                  if (prInfo) {
-                    allPrInfo.add(`#${prInfo.number} ${prInfo.title}`);
-                    core.info(`File ${d.filename} PR info: #${prInfo.number} ${prInfo.title}`);
-                  } else {
-                    core.info(`File ${d.filename} PR info: none`);
-                  }
-
-                  return {
-                    from: syncFile?.from,
-                    to: d.filename,
-                    deleted: isDeleted,
-                  };
-                }),
-              );
-
-              const prTitles = Array.from(allPrInfo) || [];
-              core.info(`Template variables: changes=${fileChanges.length}, pull_request_titles=${prTitles.length}`);
-              core.info(`PR titles: ${JSON.stringify(prTitles)}`);
-
-              return {
+              const templateVars = {
+                github: GH_SERVER,
+                repository: GH_REPOSITORY,
+                workflow: GH_WORKFLOW,
+                run: {
+                  id: GH_RUN_ID,
+                  number: GH_RUN_NUMBER,
+                  url: `${GH_SERVER}/${GH_REPOSITORY}/actions/runs/${GH_RUN_ID}`,
+                },
                 changes: fileChanges,
-                pull_request_titles: prTitles,
+                index: i,
               };
-            })();
 
-            const templateVars = {
-              github: GH_SERVER,
-              repository: GH_REPOSITORY,
-              workflow: GH_WORKFLOW,
-              run: {
-                id: GH_RUN_ID,
-                number: GH_RUN_NUMBER,
-                url: `${GH_SERVER}/${GH_REPOSITORY}/actions/runs/${GH_RUN_ID}`,
-              },
-              ...templateData,
-              index: i,
-            };
+              return render([cfg.pull_request.body, PR_FOOTER].join('\n'), templateVars);
+            } else {
+              // Try to get CHANGELOG.md from source repository
+              core.info('No custom body template configured, trying to get CHANGELOG.md from source repository');
 
-            core.info(`About to render template with variables: ${Object.keys(templateVars).join(', ')}`);
-            return render([cfg.pull_request.body, PR_FOOTER].join('\n'), templateVars);
+              try {
+                const sourceRepo = await github.initializeRepository(GH_REPOSITORY)();
+                if (T.isRight(sourceRepo)) {
+                  const changelogContent = await sourceRepo.right.getFileContent('CHANGELOG.md')();
+                  if (T.isRight(changelogContent) && changelogContent.right) {
+                    core.info('Found CHANGELOG.md in source repository, parsing latest entry');
+                    const latestEntry = parseLatestChangelog(changelogContent.right);
+                    if (latestEntry) {
+                      core.info('Using latest CHANGELOG.md entry as PR body');
+                      return [latestEntry, PR_FOOTER].join('\n');
+                    }
+                  }
+                }
+              } catch (error) {
+                core.info(`Failed to get CHANGELOG.md: ${error}`);
+              }
+
+              // Fallback to default template
+              core.info('Using default PR body template');
+              const fileChanges = diff.right.map((d: any) => {
+                const syncFile = files.right.find((f) => f.to === d.filename);
+                const isDeleted = filesToDelete.some((f) => f.path === d.filename);
+
+                return {
+                  from: syncFile?.from,
+                  to: d.filename,
+                  deleted: isDeleted,
+                };
+              });
+
+              const templateVars = {
+                github: GH_SERVER,
+                repository: GH_REPOSITORY,
+                workflow: GH_WORKFLOW,
+                run: {
+                  id: GH_RUN_ID,
+                  number: GH_RUN_NUMBER,
+                  url: `${GH_SERVER}/${GH_REPOSITORY}/actions/runs/${GH_RUN_ID}`,
+                },
+                changes: fileChanges,
+                index: i,
+              };
+
+              return render([cfg.pull_request.body, PR_FOOTER].join('\n'), templateVars);
+            }
           } catch (error) {
             core.setFailed(`Template rendering error: ${error}`);
             core.info(`Template body: ${cfg.pull_request.body}`);

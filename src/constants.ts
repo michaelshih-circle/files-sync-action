@@ -49,16 +49,6 @@ This PR contains the following updates:
 - \`<%- file.from %>\` to \`<%- file.to %>\`
 <% } -%>
 <%_ } -%>
-
-<% if (pull_request_titles && pull_request_titles.length > 0) { -%>
----
-
-### Related Pull Requests
-
-<%_ for (const prTitle of pull_request_titles) { -%>
-- <%- prTitle %>
-<%_ } -%>
-<% } -%>
     `.trim(),
     reviewers: [] as string[],
     assignees: [] as string[],
